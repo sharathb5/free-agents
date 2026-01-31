@@ -1,0 +1,30 @@
+id: summarizer
+version: "1.0.0"
+name: Text Summarizer
+description: Summarize long text into a concise form.
+primitive: transform
+input_schema:
+  type: object
+  required:
+    - text
+  properties:
+    text:
+      type: string
+      title: Text to summarize
+output_schema:
+  type: object
+  required:
+    - summary
+    - bullets
+  properties:
+    summary:
+      type: string
+      title: Summary of the input text
+    bullets:
+      type: array
+      items:
+        type: string
+        title: Summary bullet point
+prompt: |
+  You are a helpful assistant that summarizes text.
+  Produce a concise summary and a small list of bullet points capturing the key ideas.

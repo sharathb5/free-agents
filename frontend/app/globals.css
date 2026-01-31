@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark-default theme tokens (palette-mapped) */
+    --background: 22 86% 8%; /* kilamanjaro #271203 */
+    --foreground: 36 21% 94%; /* pampas #F0EDE8 */
+    --card: 22 86% 10%;
+    --card-foreground: 36 21% 94%;
+    --popover: 22 86% 10%;
+    --popover-foreground: 36 21% 94%;
+    --primary: 203 23% 38%; /* blue-bayoux #496677 */
+    --primary-foreground: 36 21% 94%;
+    --secondary: 219 28% 71%; /* rock-blue #9FB2CD */
+    --secondary-foreground: 22 86% 8%;
+    --muted: 203 23% 22%;
+    --muted-foreground: 36 21% 80%;
+    --accent: 60 25% 52%; /* olive-green #ABAC5A */
+    --accent-foreground: 22 86% 8%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 219 28% 71%;
+    --input: 219 28% 71%;
+    --ring: 203 23% 38%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    /* Flat, colder dark base (palette-only mix): Kilamanjaro + a touch of Blue Bayoux.
+       Fallback keeps pure Kilamanjaro if color-mix isn't supported. */
+    background-color: #271203;
+    background: color-mix(in oklab, #271203 82%, #496677 18%);
+    color: #f0ede8;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  .font-headline {
+    font-family: var(--font-fraunces), ui-serif, Georgia, Cambria, "Times New Roman",
+      Times, serif;
+  }
+  .font-ui {
+    font-family: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+      Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  }
+  .selection-palette::selection {
+    background: color-mix(in oklab, #496677 55%, transparent);
+    color: #f0ede8;
+  }
+}

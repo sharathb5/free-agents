@@ -1,0 +1,36 @@
+id: triage
+version: "1.0.0"
+name: Email Triage Assistant
+description: Triage incoming emails into categories and priorities with suggested responses.
+primitive: classify
+input_schema:
+  type: object
+  required:
+    - email_content
+    - mailbox_context
+  properties:
+    email_content:
+      type: string
+      title: Raw email body text
+    mailbox_context:
+      type: string
+      title: Additional context about the mailbox or user
+output_schema:
+  type: object
+  required:
+    - category
+    - priority
+    - should_escalate
+    - draft_response
+  properties:
+    category:
+      type: string
+    priority:
+      type: string
+    should_escalate:
+      type: boolean
+    draft_response:
+      type: string
+prompt: |
+  You are an email triage assistant.
+  Given an email and mailbox context, decide the category, priority, whether it should be escalated, and draft a short response.

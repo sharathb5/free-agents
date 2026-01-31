@@ -1,0 +1,47 @@
+id: meeting_notes
+version: "1.0.0"
+name: Meeting Notes Extractor
+description: Extract structured notes, decisions, and action items from a meeting transcript.
+primitive: extract
+input_schema:
+  type: object
+  required:
+    - transcript
+  properties:
+    transcript:
+      type: string
+      title: Full meeting transcript
+output_schema:
+  type: object
+  required:
+    - summary
+    - decisions
+    - action_items
+  properties:
+    summary:
+      type: string
+      title: High-level summary of the meeting
+    decisions:
+      type: array
+      items:
+        type: string
+      title: Key decisions made in the meeting
+    action_items:
+      type: array
+      items:
+        type: object
+        properties:
+          owner:
+            type: string
+          task:
+            type: string
+          deadline:
+            type: string
+        required:
+          - owner
+          - task
+          - deadline
+      title: Action items with owner, task, and deadline ("" allowed if unknown)
+prompt: |
+  You are an assistant that extracts structured meeting notes from transcripts.
+  Provide a concise summary, list the main decisions, and enumerate action items with owner, task, and deadline.

@@ -1,0 +1,14 @@
+version: "3.9"
+
+services:
+  agent-gateway:
+    build: .
+    environment:
+      - AGENT_PRESET=${AGENT_PRESET:-summarizer}
+      - PROVIDER=${PROVIDER:-stub}
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+    ports:
+      - "4280:4280"
+    volumes:
+      - ./app/presets:/app/app/presets
+

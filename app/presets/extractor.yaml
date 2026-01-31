@@ -1,0 +1,37 @@
+id: extractor
+version: "1.0.0"
+name: Generic Extractor
+description: Extract arbitrary structured data from text given a schema description.
+primitive: extract
+input_schema:
+  type: object
+  required:
+    - text
+    - schema
+  properties:
+    text:
+      type: string
+      title: Source text to extract data from
+    schema:
+      type: object
+      additionalProperties:
+        type: string
+      title: Mapping of field_name to human-readable description
+output_schema:
+  type: object
+  required:
+    - data
+    - confidence
+  properties:
+    data:
+      type: object
+      title: Extracted data keyed by field_name
+      additionalProperties: true
+    confidence:
+      type: number
+      minimum: 0
+      maximum: 1
+      title: Overall confidence score in [0,1]
+prompt: |
+  You are an information extraction assistant.
+  Given text and a schema mapping field names to descriptions, extract values for each field and return them in a JSON object.
