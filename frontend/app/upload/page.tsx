@@ -4,6 +4,7 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ArrowLeft, UploadCloud } from "lucide-react"
+import { SignInButton, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/nextjs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 
@@ -11,6 +12,7 @@ const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:428
 
 export default function UploadAgentPage() {
   const router = useRouter()
+  const { isSignedIn, getToken } = useAuth()
   const [agentId, setAgentId] = React.useState("")
   const [version, setVersion] = React.useState("")
   const [name, setName] = React.useState("")
@@ -30,6 +32,11 @@ export default function UploadAgentPage() {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (!isSignedIn) {
+      setStatus("error")
+      setStatusMessage("Please sign in to upload an agent.")
+      return
+    }
     setStatus("loading")
     setStatusMessage("")
     setFieldErrors([])
@@ -90,9 +97,20 @@ export default function UploadAgentPage() {
     }
 
     try {
+      const token = await getToken({
+        template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
+      })
+      if (!token) {
+        setStatus("error")
+        setStatusMessage("Missing session token. Please sign in again.")
+        return
+      }
       const res = await fetch(`${GATEWAY_URL}/agents/register`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ spec }),
       })
       const data = await res.json()
@@ -115,13 +133,27 @@ export default function UploadAgentPage() {
   return (
     <div className="min-h-screen selection-palette">
       <main className="mx-auto max-w-5xl px-4 md:px-8 py-12">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 text-sm text-pampas/70 hover:text-pampas"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to marketplace
-        </Link>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 text-sm text-pampas/70 hover:text-pampas"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to marketplace
+          </Link>
+          <div className="flex items-center gap-3">
+            <SignedOut>
+              <SignInButton>
+                <button className="rounded-full border border-rock-blue/20 bg-pampas/8 px-4 py-2 text-xs font-semibold tracking-[0.18em] text-pampas/75 uppercase">
+                  Sign in
+                </button>
+              </SignInButton>
+            </SignedOut>
+            <SignedIn>
+              <UserButton afterSignOutUrl="/" />
+            </SignedIn>
+          </div>
+        </div>
 
         <div className="mt-6 rounded-3xl border border-rock-blue/20 bg-pampas/6 p-6 md:p-10 shadow-[0_40px_120px_-80px_rgba(159,178,205,0.55)] backdrop-blur">
           <div className="flex flex-col gap-2">
@@ -135,6 +167,11 @@ export default function UploadAgentPage() {
               Fill out the required fields to register an agent spec. You can paste JSON
               schemas directly into the input and output schema boxes.
             </p>
+            {!isSignedIn && (
+              <p className="text-xs text-pampas/55">
+                Sign in to upload and manage your agents.
+              </p>
+            )}
           </div>
 
           <form className="mt-8 grid gap-6" onSubmit={handleSubmit}>
@@ -272,6 +309,7 @@ export default function UploadAgentPage() {
                   value={memoryMode}
                   onChange={(e) => setMemoryMode(e.target.value)}
                   disabled={!supportsMemory}
+                  className="bg-white/5 placeholder:text-white/85 placeholder:opacity-100 disabled:bg-white/5 disabled:text-pampas disabled:placeholder:text-white/85 disabled:opacity-100"
                 />
               </div>
               <div className="grid gap-2">
@@ -281,6 +319,7 @@ export default function UploadAgentPage() {
                   value={memoryMaxMessages}
                   onChange={(e) => setMemoryMaxMessages(e.target.value)}
                   disabled={!supportsMemory}
+                  className="bg-white/5 placeholder:text-white/85 placeholder:opacity-100 disabled:bg-white/5 disabled:text-pampas disabled:placeholder:text-white/85 disabled:opacity-100"
                 />
               </div>
               <div className="grid gap-2 md:col-span-2">
@@ -290,6 +329,7 @@ export default function UploadAgentPage() {
                   value={memoryMaxChars}
                   onChange={(e) => setMemoryMaxChars(e.target.value)}
                   disabled={!supportsMemory}
+                  className="bg-white/5 placeholder:text-white/85 placeholder:opacity-100 disabled:bg-white/5 disabled:text-pampas disabled:placeholder:text-white/85 disabled:opacity-100"
                 />
               </div>
             </section>
@@ -298,9 +338,13 @@ export default function UploadAgentPage() {
               <p className="text-xs text-pampas/55">
                 Required fields marked with <span className="text-pampas/60">*</span>.
               </p>
-              <Button type="submit" className="h-11 rounded-xl" disabled={status === "loading"}>
+              <Button
+                type="submit"
+                className="h-11 rounded-xl"
+                disabled={status === "loading" || !isSignedIn}
+              >
                 <UploadCloud className="mr-2 h-4 w-4" />
-                {status === "loading" ? "Uploading..." : "Upload agent"}
+                {status === "loading" ? "Uploading..." : isSignedIn ? "Upload agent" : "Sign in to upload"}
               </Button>
             </div>
             {status !== "idle" && (

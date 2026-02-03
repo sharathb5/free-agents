@@ -14,7 +14,8 @@ import yaml
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
-from app.dependencies import AuthError, get_provider
+from app.config import get_settings
+from app.dependencies import AuthError, get_provider, require_clerk_user_id
 from app.engine import build_error_envelope, new_request_id, process_invoke_for_preset
 from app.preset_loader import PresetLoadError, get_active_preset
 from app.registry_adapter import spec_to_preset
@@ -87,7 +88,11 @@ async def register_agent(request: Request) -> JSONResponse:
         return _agents_error(400, "AGENT_SPEC_INVALID", "Spec must be a YAML string or JSON object")
 
     try:
-        agent_id, version = registry_store.register_agent(spec_obj)
+        settings = get_settings()
+        owner_user_id: Optional[str] = None
+        if settings.clerk_jwt_key or settings.clerk_jwks_url:
+            owner_user_id = require_clerk_user_id(request)
+        agent_id, version = registry_store.register_agent(spec_obj, owner_user_id=owner_user_id)
     except registry_store.AgentSpecInvalid as exc:
         return _agents_error(400, "AGENT_SPEC_INVALID", str(exc), details=getattr(exc, "details", None))
     except registry_store.AgentVersionExists as exc:
@@ -100,6 +105,20 @@ async def register_agent(request: Request) -> JSONResponse:
         status_code=200,
         content={"ok": True, "agent_id": agent_id, "version": version, "status": "registered"},
     )
+
+
+@router.get("/mine")
+async def get_my_agents(request: Request) -> JSONResponse:
+    """
+    List agents owned by the current authenticated user.
+    """
+    try:
+        owner_user_id = require_clerk_user_id(request)
+    except AuthError as exc:
+        return _agents_error(401, "UNAUTHORIZED", str(exc))
+
+    agents = registry_store.list_agents_by_owner(owner_user_id)
+    return JSONResponse(status_code=200, content={"agents": agents})
 
 
 @router.get("")

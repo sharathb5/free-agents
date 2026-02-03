@@ -10,7 +10,6 @@ from fastapi import Request
 from jsonschema import Draft7Validator
 
 from .config import get_settings
-from .dependencies import AuthError
 from .models import InvokeContext, MemoryPolicy
 from .preset_loader import Preset, PresetLoadError, get_active_preset
 from .providers import BaseProvider, ProviderResult
@@ -266,19 +265,7 @@ async def process_invoke_for_preset(
     settings = get_settings()
 
     try:
-        # 1) Enforce auth (if enabled).
-        try:
-            from .dependencies import enforce_auth
-
-            enforce_auth(request)
-        except AuthError as exc:
-            raise ErrorEnvelope(
-                status_code=401,
-                code="UNAUTHORIZED",
-                message=str(exc),
-            ) from exc
-
-        # 2) Parse JSON body, handling malformed JSON explicitly.
+        # 1) Parse JSON body, handling malformed JSON explicitly.
         try:
             body_bytes = await request.body()
         except Exception:

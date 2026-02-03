@@ -1,7 +1,7 @@
 """
 Registry store: SQLite-backed agent registry.
 
-Agents table: (id, version, name, description, primitive, supports_memory, tags, spec_json, created_at)
+Agents table: (id, version, name, description, primitive, supports_memory, owner_user_id, tags, spec_json, created_at)
 One connection per request; DB_PATH from env (default ./data/gateway.db).
 """
 
@@ -75,6 +75,7 @@ def init_registry_db() -> None:
                 description TEXT NOT NULL,
                 primitive TEXT NOT NULL,
                 supports_memory INTEGER NOT NULL,
+                owner_user_id TEXT,
                 tags TEXT,
                 spec_json TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
@@ -82,8 +83,14 @@ def init_registry_db() -> None:
             )
             """
         )
+        try:
+            conn.execute("ALTER TABLE agents ADD COLUMN owner_user_id TEXT")
+        except sqlite3.OperationalError:
+            # Column already exists.
+            pass
         conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_id ON agents (id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_primitive ON agents (primitive)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_agents_owner ON agents (owner_user_id)")
         conn.commit()
 
 
@@ -186,7 +193,7 @@ def _normalize_spec(raw_spec: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def register_agent(spec: Dict[str, Any]) -> Tuple[str, str]:
+def register_agent(spec: Dict[str, Any], *, owner_user_id: Optional[str] = None) -> Tuple[str, str]:
     """
     Validate and register an agent spec. Returns (id, version).
     Raises AgentSpecInvalid or AgentVersionExists.
@@ -208,8 +215,8 @@ def register_agent(spec: Dict[str, Any]) -> Tuple[str, str]:
             """
             INSERT INTO agents (
                 id, version, name, description, primitive,
-                supports_memory, tags, spec_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                supports_memory, owner_user_id, tags, spec_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 normalized["id"],
@@ -218,6 +225,7 @@ def register_agent(spec: Dict[str, Any]) -> Tuple[str, str]:
                 normalized["description"],
                 normalized["primitive"],
                 supports_memory_int,
+                owner_user_id,
                 tags_json,
                 json.dumps(normalized),
                 created_at,
@@ -276,6 +284,42 @@ def list_agents(
 
     with _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
+
+    agents: List[Dict[str, Any]] = []
+    for row in rows:
+        tags = None
+        if row["tags"]:
+            try:
+                tags = json.loads(row["tags"])
+            except Exception:
+                tags = None
+        agents.append(
+            {
+                "id": row["id"],
+                "version": row["version"],
+                "name": row["name"],
+                "description": row["description"],
+                "primitive": row["primitive"],
+                "supports_memory": bool(row["supports_memory"]),
+                "tags": tags,
+                "created_at": row["created_at"],
+            }
+        )
+    return agents
+
+
+def list_agents_by_owner(owner_user_id: str) -> List[Dict[str, Any]]:
+    init_registry_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM agents
+            WHERE owner_user_id = ?
+            ORDER BY id, created_at DESC, rowid DESC
+            """,
+            (owner_user_id,),
+        ).fetchall()
 
     agents: List[Dict[str, Any]] = []
     for row in rows:

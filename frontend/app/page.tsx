@@ -17,34 +17,95 @@ import {
 } from "@/components/ui/dialog"
 import { CodeBlock } from "@/components/CodeBlock"
 import { Card } from "@/components/ui/card"
-import { agents, Agent, Primitive } from "@/lib/agents"
+import { SignInButton, SignedIn, SignedOut, useAuth } from "@clerk/nextjs"
+import { AgentSummary, Primitive } from "@/lib/agents"
 
 export default function MarketplacePage() {
+  const { isSignedIn, getToken } = useAuth()
   const [searchQuery, setSearchQuery] = React.useState("")
   const [selectedPrimitive, setSelectedPrimitive] = React.useState<Primitive | "all">("all")
-  const [selectedAgent, setSelectedAgent] = React.useState<Agent | null>(null)
+  const [selectedAgent, setSelectedAgent] = React.useState<AgentSummary | null>(null)
   const [isModalOpen, setIsModalOpen] = React.useState(false)
   const [isSetupOpen, setIsSetupOpen] = React.useState(false)
   const [toastMessage, setToastMessage] = React.useState("")
   const [showToast, setShowToast] = React.useState(false)
+  const [agents, setAgents] = React.useState<AgentSummary[]>([])
+  const [agentsLoading, setAgentsLoading] = React.useState(false)
+  const [agentsError, setAgentsError] = React.useState<string | null>(null)
+  const [showMine, setShowMine] = React.useState(false)
   const searchRef = React.useRef<HTMLInputElement | null>(null)
 
-  const REPO_CLONE_COMMAND = "git clone <REPO_URL> && cd agent-toolbox"
-  const PROJECT_SETUP_COMMAND = "make install"
+  const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4280"
+
+  const REPO_CLONE_COMMAND = "pip install agent-toolbox"
+  const PROJECT_SETUP_COMMAND = "agent-toolbox setup"
   const LOCAL_RUN_EXAMPLE = "AGENT_PRESET=summarizer make run"
   const DOCKER_RUN_EXAMPLE = "make docker-up AGENT=summarizer"
+
+  React.useEffect(() => {
+    let active = true
+    const loadAgents = async () => {
+      setAgentsLoading(true)
+      setAgentsError(null)
+      try {
+        if (showMine) {
+          if (!isSignedIn) {
+            setAgents([])
+            setAgentsError("Sign in to see agents you own.")
+            return
+          }
+          const token = await getToken({
+            template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
+          })
+          if (!token) {
+            setAgents([])
+            setAgentsError("Missing session token. Please sign in again.")
+            return
+          }
+          const res = await fetch(`${GATEWAY_URL}/agents/mine`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          const data = await res.json()
+          if (!active) return
+          if (res.ok) {
+            setAgents(data.agents || [])
+          } else {
+            setAgentsError(data?.error?.message || `Failed (${res.status})`)
+          }
+        } else {
+          const res = await fetch(`${GATEWAY_URL}/agents?latest_only=true`)
+          const data = await res.json()
+          if (!active) return
+          if (res.ok) {
+            setAgents(data.agents || [])
+          } else {
+            setAgentsError(data?.error?.message || `Failed (${res.status})`)
+          }
+        }
+      } catch (e) {
+        if (!active) return
+        setAgentsError(e instanceof Error ? e.message : "Request failed")
+      } finally {
+        if (active) setAgentsLoading(false)
+      }
+    }
+    loadAgents()
+    return () => {
+      active = false
+    }
+  }, [getToken, isSignedIn, showMine])
 
   const filteredAgents = agents.filter((agent) => {
     const matchesSearch =
       agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       agent.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.tags.some((tag) => tag.toLowerCase().includes(searchQuery.toLowerCase()))
+      (agent.tags || []).some((tag) => tag.toLowerCase().includes(searchQuery.toLowerCase()))
     const matchesPrimitive =
       selectedPrimitive === "all" || agent.primitive === selectedPrimitive
     return matchesSearch && matchesPrimitive
   })
 
-  const handleAgentClick = (agent: Agent) => {
+  const handleAgentClick = (agent: AgentSummary) => {
     setSelectedAgent(agent)
     setIsModalOpen(true)
   }
@@ -81,7 +142,7 @@ export default function MarketplacePage() {
                 Run AI agents locally in one command.
               </h1>
               <p className="mt-4 text-base md:text-lg text-pampas/70">
-                Clone the repo → set up once → pick a preset → call{" "}
+                Install via pip → set up once → pick a preset → call{" "}
                 <span className="font-mono text-pampas/85">/invoke</span>.
               </p>
             </div>
@@ -115,6 +176,31 @@ export default function MarketplacePage() {
               />
             </div>
             <div className="flex flex-wrap gap-2 md:justify-end">
+              <SignedOut>
+                <SignInButton>
+                  <button
+                    className={[
+                      "h-10 rounded-full px-4 text-sm font-medium transition-all border",
+                      "bg-pampas/5 text-pampas/75 border-rock-blue/15 hover:bg-pampas/8 hover:text-pampas",
+                    ].join(" ")}
+                  >
+                    Sign in
+                  </button>
+                </SignInButton>
+              </SignedOut>
+              <SignedIn>
+                <button
+                  onClick={() => setShowMine((prev) => !prev)}
+                  className={[
+                    "h-10 rounded-full px-4 text-sm font-medium transition-all border",
+                    showMine
+                      ? "bg-blue-bayoux/90 text-pampas border-rock-blue/18 shadow-[0_20px_50px_-40px_rgba(159,178,205,0.55)]"
+                      : "bg-pampas/5 text-pampas/75 border-rock-blue/15 hover:bg-pampas/8 hover:text-pampas",
+                  ].join(" ")}
+                >
+                  By you
+                </button>
+              </SignedIn>
               {primitives.map((primitive) => {
                 const active = selectedPrimitive === primitive.value
                 return (
@@ -134,9 +220,13 @@ export default function MarketplacePage() {
               })}
             </div>
           </div>
-          <div className="mt-4 text-xs text-pampas/55">
-            Showing <span className="text-pampas/75">{filteredAgents.length}</span> of{" "}
-            <span className="text-pampas/75">{agents.length}</span> agents
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-pampas/55">
+            <div>
+              Showing <span className="text-pampas/75">{filteredAgents.length}</span> of{" "}
+              <span className="text-pampas/75">{agents.length}</span> agents
+            </div>
+            {agentsLoading && <span className="text-pampas/55">Loading…</span>}
+            {agentsError && <span className="text-red-400">{agentsError}</span>}
           </div>
         </div>
 
@@ -195,7 +285,7 @@ export default function MarketplacePage() {
 
           <div className="mt-4 space-y-4 text-sm text-pampas/85">
             <div>
-              <p className="font-semibold">Step 1 – Clone the repo</p>
+              <p className="font-semibold">Step 1 – Install via pip</p>
               <div className="mt-1">
                 <CodeBlock code={REPO_CLONE_COMMAND} />
               </div>
