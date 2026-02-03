@@ -15,6 +15,9 @@ class Settings(BaseModel):
     agent_preset: str
     provider_name: str
     auth_token: Optional[str]
+    db_path: str = "./data/gateway.db"
+    session_db_path: str = "./data/sessions.db"
+    cors_origins: str = "*"
 
     service_name: str = "agent-gateway"
     http_port: int = 4280
@@ -31,7 +34,14 @@ def _base_settings() -> Settings:
     """
 
     # These are just defaults; `get_settings` will override fields from env.
-    return Settings(agent_preset="summarizer", provider_name="stub", auth_token=None)
+    return Settings(
+        agent_preset="summarizer",
+        provider_name="stub",
+        auth_token=None,
+        db_path="./data/gateway.db",
+        session_db_path="./data/sessions.db",
+        cors_origins="*",
+    )
 
 
 def get_settings() -> Settings:
@@ -47,11 +57,17 @@ def get_settings() -> Settings:
     provider_name = (os.getenv("PROVIDER") or base.provider_name).lower()
     agent_preset = os.getenv("AGENT_PRESET") or base.agent_preset
 
+    db_path = os.getenv("DB_PATH") or os.getenv("SESSION_DB_PATH") or base.db_path
+    session_db_path = os.getenv("SESSION_DB_PATH") or db_path
+    cors_origins = os.getenv("CORS_ORIGINS") or base.cors_origins
+
     return Settings(
         agent_preset=agent_preset,
         provider_name=provider_name,
         auth_token=auth_token,
+        db_path=db_path,
+        session_db_path=session_db_path,
+        cors_origins=cors_origins,
         service_name=base.service_name,
         http_port=base.http_port,
     )
-
