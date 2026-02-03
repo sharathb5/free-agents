@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { Search } from "lucide-react"
+import { Plus, Search } from "lucide-react"
+import Link from "next/link"
 import { Input } from "@/components/ui/input"
 import { AgentCard } from "@/components/AgentCard"
 import { AgentDetailModal } from "@/components/AgentDetailModal"
@@ -15,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { CodeBlock } from "@/components/CodeBlock"
+import { Card } from "@/components/ui/card"
 import { agents, Agent, Primitive } from "@/lib/agents"
 
 export default function MarketplacePage() {
@@ -142,6 +144,25 @@ export default function MarketplacePage() {
         <div className="mt-8">
           {filteredAgents.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch">
+              <Link
+                href="/upload"
+                className="group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rock-blue/60 focus-visible:ring-offset-2 focus-visible:ring-offset-kilamanjaro rounded-2xl"
+              >
+                <div className="relative h-full min-h-[260px] rounded-2xl border border-rock-blue/15 bg-white/5 backdrop-blur-sm transition-all hover:-translate-y-1 hover:border-rock-blue/30">
+                  <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/5 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+                  <div className="relative flex h-full flex-col items-center justify-center gap-4 p-6 text-center">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/30 bg-white/10 text-white/70">
+                      <Plus className="h-7 w-7" />
+                    </div>
+                    <div className="text-lg font-semibold tracking-tight text-pampas/85">
+                      Add your own agent
+                    </div>
+                    <div className="text-xs text-pampas/55">
+                      Upload a custom spec
+                    </div>
+                  </div>
+                </div>
+              </Link>
               {filteredAgents.map((agent) => (
                 <AgentCard
                   key={agent.id}

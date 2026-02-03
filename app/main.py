@@ -1,23 +1,53 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .dependencies import get_provider
+from .config import get_settings
+from .dependencies import AuthError, get_provider
 from .engine import (
     build_error_envelope,
     new_request_id,
     process_invoke_request,
 )
-from .preset_loader import PresetLoadError, get_active_preset
+from .preset_loader import PRESETS_DIR, PresetLoadError, get_active_preset
+from .routers import agents as agents_router
+from .routers import sessions as sessions_router
+from .storage import registry_store
+from .storage import session_store
 
 
 logger = logging.getLogger("agent-gateway")
 
-app = FastAPI(title="Standardized Agent Runtime", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize DB and teardown on shutdown."""
+    session_store.init_db()
+    registry_store.init_registry_db()
+    registry_store.seed_from_presets(PRESETS_DIR)
+    yield
+
+
+app = FastAPI(title="Standardized Agent Runtime", version="0.1.0", lifespan=lifespan)
+
+
+# CORS: controlled by env CORS_ORIGINS (e.g. * or http://localhost:3000)
+_cors_origins_list = [o.strip() for o in get_settings().cors_origins.strip().split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(agents_router.router)
+app.include_router(sessions_router.router)
 
 
 @app.get("/")
@@ -128,13 +158,12 @@ async def stream(request: Request) -> JSONResponse:
     except PresetLoadError:
         preset = None
 
-    # Enforce auth for mutating endpoints if configured, even though streaming
-    # isn't implemented yet. Keeps behavior aligned with the contract.
+    # Enforce auth for mutating endpoints if configured. Catch only AuthError.
     try:
         from .dependencies import enforce_auth
 
         enforce_auth(request)
-    except Exception as exc:
+    except AuthError as exc:
         status_code, body = build_error_envelope(
             request_id=request_id,
             preset=preset,
@@ -159,4 +188,3 @@ async def stream(request: Request) -> JSONResponse:
 def get_app() -> FastAPI:
     """Convenience accessor for external runners."""
     return app
-
