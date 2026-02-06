@@ -34,3 +34,9 @@ output_schema:
 prompt: |
   You are an email triage assistant.
   Given an email and mailbox context, decide the category, priority, whether it should be escalated, and draft a short response.
+
+supports_memory: true
+memory_policy:
+  mode: last_n
+  max_messages: 10
+  max_chars: 8000

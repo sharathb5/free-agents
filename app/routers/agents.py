@@ -10,11 +10,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+import json
 import yaml
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.dependencies import AuthError, get_provider
+from app.config import get_settings
+from app.dependencies import AuthError, get_provider, require_clerk_user_id
 from app.engine import build_error_envelope, new_request_id, process_invoke_for_preset
 from app.preset_loader import PresetLoadError, get_active_preset
 from app.registry_adapter import spec_to_preset
@@ -87,7 +89,13 @@ async def register_agent(request: Request) -> JSONResponse:
         return _agents_error(400, "AGENT_SPEC_INVALID", "Spec must be a YAML string or JSON object")
 
     try:
-        agent_id, version = registry_store.register_agent(spec_obj)
+        settings = get_settings()
+        owner_user_id: Optional[str] = None
+        if settings.clerk_jwt_key or settings.clerk_jwks_url:
+            owner_user_id = require_clerk_user_id(request)
+        agent_id, version = registry_store.register_agent(spec_obj, owner_user_id=owner_user_id)
+    except registry_store.AgentNotOwner as exc:
+        return _agents_error(403, "FORBIDDEN", str(exc))
     except registry_store.AgentSpecInvalid as exc:
         return _agents_error(400, "AGENT_SPEC_INVALID", str(exc), details=getattr(exc, "details", None))
     except registry_store.AgentVersionExists as exc:
@@ -102,12 +110,33 @@ async def register_agent(request: Request) -> JSONResponse:
     )
 
 
+@router.get("/mine")
+async def get_my_agents(request: Request, include_archived: Optional[str] = None) -> JSONResponse:
+    """
+    List agents owned by the current authenticated user.
+    """
+    try:
+        owner_user_id = require_clerk_user_id(request)
+    except AuthError as exc:
+        return _agents_error(401, "UNAUTHORIZED", str(exc))
+
+    include_archived_bool = _parse_bool(include_archived)
+    if include_archived_bool is None:
+        include_archived_bool = False
+    agents = registry_store.list_agents_by_owner(
+        owner_user_id,
+        include_archived=include_archived_bool,
+    )
+    return JSONResponse(status_code=200, content={"agents": agents})
+
+
 @router.get("")
 async def get_agents(
     q: Optional[str] = None,
     primitive: Optional[str] = None,
     supports_memory: Optional[str] = None,
     latest_only: Optional[str] = None,
+    include_archived: Optional[str] = None,
 ) -> JSONResponse:
     """
     List agents from the registry with optional filters.
@@ -115,16 +144,120 @@ async def get_agents(
     """
     supports_memory_bool = _parse_bool(supports_memory)
     latest_only_bool = _parse_bool(latest_only)
+    include_archived_bool = _parse_bool(include_archived)
     if latest_only_bool is None:
         latest_only_bool = True
+    if include_archived_bool is None:
+        include_archived_bool = False
 
     agents = registry_store.list_agents(
         q=q,
         primitive=primitive,
         supports_memory=supports_memory_bool,
         latest_only=latest_only_bool,
+        include_archived=include_archived_bool,
     )
     return JSONResponse(status_code=200, content={"agents": agents})
+
+
+@router.post("/{agent_id}/archive")
+async def archive_agent(request: Request, agent_id: str, version: Optional[str] = None) -> JSONResponse:
+    """
+    Archive an agent (soft delete). Requires auth and ownership.
+    """
+    owner_user_id: Optional[str] = None
+    settings = get_settings()
+    if settings.clerk_jwt_key or settings.clerk_jwks_url:
+        try:
+            owner_user_id = require_clerk_user_id(request)
+        except AuthError as exc:
+            return _agents_error(401, "UNAUTHORIZED", str(exc))
+
+    try:
+        agent_id_out, version_out = registry_store.archive_agent(
+            agent_id,
+            version=version,
+            owner_user_id=owner_user_id,
+        )
+    except registry_store.AgentNotOwner as exc:
+        return _agents_error(403, "FORBIDDEN", str(exc))
+    except registry_store.AgentNotFound as exc:
+        return _agents_error(404, "AGENT_NOT_FOUND", str(exc))
+    except Exception as exc:
+        logger.exception("archive_agent failed")
+        return _agents_error(500, "REGISTRY_ERROR", "Failed to archive agent", details={"message": str(exc)})
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "agent_id": agent_id_out,
+            "version": version_out,
+            "status": "archived",
+        },
+    )
+
+
+@router.post("/{agent_id}/unarchive")
+async def unarchive_agent(request: Request, agent_id: str, version: Optional[str] = None) -> JSONResponse:
+    """
+    Unarchive an agent. Requires auth and ownership.
+    """
+    owner_user_id: Optional[str] = None
+    settings = get_settings()
+    if settings.clerk_jwt_key or settings.clerk_jwks_url:
+        try:
+            owner_user_id = require_clerk_user_id(request)
+        except AuthError as exc:
+            return _agents_error(401, "UNAUTHORIZED", str(exc))
+
+    try:
+        agent_id_out, version_out = registry_store.unarchive_agent(
+            agent_id,
+            version=version,
+            owner_user_id=owner_user_id,
+        )
+    except registry_store.AgentNotOwner as exc:
+        return _agents_error(403, "FORBIDDEN", str(exc))
+    except registry_store.AgentNotFound as exc:
+        return _agents_error(404, "AGENT_NOT_FOUND", str(exc))
+    except Exception as exc:
+        logger.exception("unarchive_agent failed")
+        return _agents_error(500, "REGISTRY_ERROR", "Failed to unarchive agent", details={"message": str(exc)})
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "agent_id": agent_id_out,
+            "version": version_out,
+            "status": "active",
+        },
+    )
+
+
+@router.get("/updates/stream")
+async def stream_agent_updates() -> StreamingResponse:
+    """
+    Server-sent events stream for agent registry updates.
+    Emits `agent_created` events when a new agent is registered.
+    """
+
+    async def event_stream():
+        last_seen = registry_store.get_registry_version()
+        # Initial keepalive so the client knows the stream is connected.
+        yield ": connected\n\n"
+        while True:
+            version = await registry_store.wait_for_registry_change(last_seen)
+            if version != last_seen:
+                last_seen = version
+                payload = json.dumps({"version": version})
+                yield f"event: agent_created\ndata: {payload}\n\n"
+            else:
+                # Periodic keepalive to avoid idle timeouts.
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/{agent_id}")
@@ -142,11 +275,13 @@ async def get_agents_id(agent_id: str, version: Optional[str] = None) -> JSONRes
         "name": spec.get("name"),
         "description": spec.get("description"),
         "primitive": spec.get("primitive"),
+        "prompt": spec.get("prompt"),
         "input_schema": spec.get("input_schema"),
         "output_schema": spec.get("output_schema"),
         "supports_memory": bool(spec.get("supports_memory", False)),
         "memory_policy": spec.get("memory_policy"),
         "tags": spec.get("tags"),
+        "credits": spec.get("credits"),
         "created_at": spec.get("created_at"),
     }
     return JSONResponse(status_code=200, content=body)

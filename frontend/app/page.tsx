@@ -17,34 +17,190 @@ import {
 } from "@/components/ui/dialog"
 import { CodeBlock } from "@/components/CodeBlock"
 import { Card } from "@/components/ui/card"
-import { agents, Agent, Primitive } from "@/lib/agents"
+import { SignInButton, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/nextjs"
+import { AgentSummary, Primitive } from "@/lib/agents"
 
 export default function MarketplacePage() {
+  const { isSignedIn, getToken } = useAuth()
   const [searchQuery, setSearchQuery] = React.useState("")
   const [selectedPrimitive, setSelectedPrimitive] = React.useState<Primitive | "all">("all")
-  const [selectedAgent, setSelectedAgent] = React.useState<Agent | null>(null)
+  const [selectedAgent, setSelectedAgent] = React.useState<AgentSummary | null>(null)
   const [isModalOpen, setIsModalOpen] = React.useState(false)
   const [isSetupOpen, setIsSetupOpen] = React.useState(false)
   const [toastMessage, setToastMessage] = React.useState("")
   const [showToast, setShowToast] = React.useState(false)
+  const [agents, setAgents] = React.useState<AgentSummary[]>([])
+  const [agentsLoading, setAgentsLoading] = React.useState(false)
+  const [agentsError, setAgentsError] = React.useState<string | null>(null)
+  const [showMine, setShowMine] = React.useState(false)
+  const [showArchived, setShowArchived] = React.useState(false)
+  const [ownedIds, setOwnedIds] = React.useState<Set<string>>(new Set())
   const searchRef = React.useRef<HTMLInputElement | null>(null)
+  const initialCacheLoaded = React.useRef(false)
+  const requestIdRef = React.useRef(0)
 
-  const REPO_CLONE_COMMAND = "git clone <REPO_URL> && cd agent-toolbox"
-  const PROJECT_SETUP_COMMAND = "make install"
+  const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4280"
+  const AGENTS_CACHE_KEY = "agent-catalog:agents:latest"
+
+  const REPO_CLONE_COMMAND = "pip install agent-toolbox"
+  const PROJECT_SETUP_COMMAND = "agent-toolbox setup"
   const LOCAL_RUN_EXAMPLE = "AGENT_PRESET=summarizer make run"
   const DOCKER_RUN_EXAMPLE = "make docker-up AGENT=summarizer"
 
+  React.useEffect(() => {
+    if (showMine) return
+    if (initialCacheLoaded.current) return
+    initialCacheLoaded.current = true
+    try {
+      const cached = localStorage.getItem(AGENTS_CACHE_KEY)
+      if (!cached) return
+      const payload = JSON.parse(cached)
+      if (Array.isArray(payload?.agents)) {
+        setAgents(payload.agents)
+      }
+    } catch {
+      // Ignore cache parse errors
+    }
+  }, [showMine])
+
+  const loadAgents = React.useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const requestId = ++requestIdRef.current
+      if (!opts?.silent) {
+        setAgentsLoading(true)
+      }
+      setAgentsError(null)
+      try {
+        if (showMine) {
+          if (!isSignedIn) {
+            setAgents([])
+            setAgentsError("Sign in to see agents you own.")
+            setOwnedIds(new Set())
+            return
+          }
+          const token = await getToken({
+            template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
+          })
+          if (!token) {
+            setAgents([])
+            setAgentsError("Missing session token. Please sign in again.")
+            return
+          }
+          const includeArchivedParam = showArchived ? "?include_archived=true" : ""
+          const res = await fetch(`${GATEWAY_URL}/agents/mine${includeArchivedParam}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          const data = await res.json()
+          const nextAgents = Array.isArray(data?.agents)
+            ? data.agents
+            : Array.isArray(data)
+              ? data
+              : []
+          if (requestIdRef.current !== requestId) return
+          if (res.ok) {
+            setAgents(nextAgents)
+            if (!Array.isArray(data?.agents) && !Array.isArray(data)) {
+              setAgentsError("Unexpected response shape from /agents/mine")
+            }
+            setOwnedIds(new Set(nextAgents.map((agent: AgentSummary) => agent.id)))
+          } else {
+            setAgentsError(data?.error?.message || `Failed (${res.status})`)
+            setOwnedIds(new Set())
+          }
+        } else {
+          const res = await fetch(`${GATEWAY_URL}/agents?latest_only=true`)
+          const data = await res.json()
+          const nextAgents = Array.isArray(data?.agents)
+            ? data.agents
+            : Array.isArray(data)
+              ? data
+              : []
+          if (requestIdRef.current !== requestId) return
+          if (res.ok) {
+            setAgents(nextAgents)
+            if (!Array.isArray(data?.agents) && !Array.isArray(data)) {
+              setAgentsError("Unexpected response shape from /agents")
+            }
+            try {
+              localStorage.setItem(
+                AGENTS_CACHE_KEY,
+                JSON.stringify({ agents: nextAgents, cached_at: Date.now() })
+              )
+            } catch {
+              // Ignore storage errors
+            }
+            if (isSignedIn) {
+              try {
+                const token = await getToken({
+                  template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
+                })
+                if (token) {
+                  const mineRes = await fetch(`${GATEWAY_URL}/agents/mine?include_archived=true`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                  })
+                  const mineData = await mineRes.json()
+                  if (mineRes.ok && Array.isArray(mineData?.agents)) {
+                    setOwnedIds(new Set(mineData.agents.map((agent: AgentSummary) => agent.id)))
+                  } else if (!mineRes.ok) {
+                    setOwnedIds(new Set())
+                  }
+                } else {
+                  setOwnedIds(new Set())
+                }
+              } catch {
+                setOwnedIds(new Set())
+              }
+            } else {
+              setOwnedIds(new Set())
+            }
+          } else {
+            setAgentsError(data?.error?.message || `Failed (${res.status})`)
+            setOwnedIds(new Set())
+          }
+        }
+      } catch (e) {
+        if (requestIdRef.current !== requestId) return
+        setAgentsError(e instanceof Error ? e.message : "Request failed")
+        setOwnedIds(new Set())
+      } finally {
+        if (requestIdRef.current !== requestId) return
+        if (!opts?.silent) {
+          setAgentsLoading(false)
+        }
+      }
+    },
+    [getToken, isSignedIn, showMine, showArchived, GATEWAY_URL]
+  )
+
+  React.useEffect(() => {
+    loadAgents()
+  }, [loadAgents])
+
+  React.useEffect(() => {
+    if (showMine) return
+    const streamUrl = `${GATEWAY_URL}/agents/updates/stream`
+    const eventSource = new EventSource(streamUrl)
+    const handleAgentCreated = () => {
+      loadAgents({ silent: true })
+    }
+    eventSource.addEventListener("agent_created", handleAgentCreated)
+    return () => {
+      eventSource.removeEventListener("agent_created", handleAgentCreated)
+      eventSource.close()
+    }
+  }, [GATEWAY_URL, loadAgents, showMine])
+
   const filteredAgents = agents.filter((agent) => {
     const matchesSearch =
-      agent.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      agent.tags.some((tag) => tag.toLowerCase().includes(searchQuery.toLowerCase()))
+      (agent.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (agent.description || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (agent.tags || []).some((tag) => tag.toLowerCase().includes(searchQuery.toLowerCase()))
     const matchesPrimitive =
       selectedPrimitive === "all" || agent.primitive === selectedPrimitive
     return matchesSearch && matchesPrimitive
   })
 
-  const handleAgentClick = (agent: Agent) => {
+  const handleAgentClick = (agent: AgentSummary) => {
     setSelectedAgent(agent)
     setIsModalOpen(true)
   }
@@ -70,10 +226,24 @@ export default function MarketplacePage() {
           <div className="absolute top-24 right-[-120px] h-[320px] w-[320px] rounded-full bg-rock-blue/14 blur-[90px]" />
         </div>
 
-        <div className="mx-auto max-w-7xl px-4 md:px-8 pt-14 pb-10">
+        <div className="mx-auto max-w-7xl px-4 md:px-8 pt-10 pb-10">
           <div className="flex flex-col gap-7">
-            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-rock-blue/18 bg-pampas/6 px-3 py-1 text-xs font-semibold tracking-[0.18em] text-pampas/75">
-              LOCAL AGENT MARKETPLACE
+            <div className="flex items-center justify-between gap-4">
+              <div className="inline-flex w-fit items-center gap-2 rounded-full border border-rock-blue/18 bg-pampas/6 px-3 py-1 text-xs font-semibold tracking-[0.18em] text-pampas/75">
+                LOCAL AGENT MARKETPLACE
+              </div>
+              <div className="flex items-center gap-3">
+                <SignedOut>
+                  <SignInButton>
+                    <button className="rounded-full border border-rock-blue/20 bg-pampas/8 px-4 py-2 text-xs font-semibold tracking-[0.18em] text-pampas/75 uppercase">
+                      Sign in
+                    </button>
+                  </SignInButton>
+                </SignedOut>
+                <SignedIn>
+                  <UserButton afterSignOutUrl="/" />
+                </SignedIn>
+              </div>
             </div>
 
             <div className="max-w-3xl">
@@ -81,7 +251,7 @@ export default function MarketplacePage() {
                 Run AI agents locally in one command.
               </h1>
               <p className="mt-4 text-base md:text-lg text-pampas/70">
-                Clone the repo → set up once → pick a preset → call{" "}
+                Install via pip → set up once → pick a preset → call{" "}
                 <span className="font-mono text-pampas/85">/invoke</span>.
               </p>
             </div>
@@ -115,6 +285,44 @@ export default function MarketplacePage() {
               />
             </div>
             <div className="flex flex-wrap gap-2 md:justify-end">
+              <SignedOut>
+                <SignInButton>
+                  <button
+                    className={[
+                      "h-10 rounded-full px-4 text-sm font-medium transition-all border",
+                      "bg-pampas/5 text-pampas/75 border-rock-blue/15 hover:bg-pampas/8 hover:text-pampas",
+                    ].join(" ")}
+                  >
+                    Sign in
+                  </button>
+                </SignInButton>
+              </SignedOut>
+              <SignedIn>
+                <button
+                  onClick={() => setShowMine((prev) => !prev)}
+                  className={[
+                    "h-10 rounded-full px-4 text-sm font-medium transition-all border",
+                    showMine
+                      ? "bg-blue-bayoux/90 text-pampas border-rock-blue/18 shadow-[0_20px_50px_-40px_rgba(159,178,205,0.55)]"
+                      : "bg-pampas/5 text-pampas/75 border-rock-blue/15 hover:bg-pampas/8 hover:text-pampas",
+                  ].join(" ")}
+                >
+                  By you
+                </button>
+              </SignedIn>
+              {showMine && (
+                <button
+                  onClick={() => setShowArchived((prev) => !prev)}
+                  className={[
+                    "h-10 rounded-full px-4 text-sm font-medium transition-all border",
+                    showArchived
+                      ? "bg-amber-900/70 text-pampas border-amber-500/40 shadow-[0_20px_50px_-40px_rgba(255,200,120,0.35)]"
+                      : "bg-pampas/5 text-pampas/75 border-rock-blue/15 hover:bg-pampas/8 hover:text-pampas",
+                  ].join(" ")}
+                >
+                  Archived
+                </button>
+              )}
               {primitives.map((primitive) => {
                 const active = selectedPrimitive === primitive.value
                 return (
@@ -134,9 +342,13 @@ export default function MarketplacePage() {
               })}
             </div>
           </div>
-          <div className="mt-4 text-xs text-pampas/55">
-            Showing <span className="text-pampas/75">{filteredAgents.length}</span> of{" "}
-            <span className="text-pampas/75">{agents.length}</span> agents
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-pampas/55">
+            <div>
+              Showing <span className="text-pampas/75">{filteredAgents.length}</span> of{" "}
+              <span className="text-pampas/75">{agents.length}</span> agents
+            </div>
+            {agentsLoading && <span className="text-pampas/55">Loading…</span>}
+            {agentsError && <span className="text-red-400">{agentsError}</span>}
           </div>
         </div>
 
@@ -195,7 +407,7 @@ export default function MarketplacePage() {
 
           <div className="mt-4 space-y-4 text-sm text-pampas/85">
             <div>
-              <p className="font-semibold">Step 1 – Clone the repo</p>
+              <p className="font-semibold">Step 1 – Install via pip</p>
               <div className="mt-1">
                 <CodeBlock code={REPO_CLONE_COMMAND} />
               </div>
@@ -253,6 +465,12 @@ export default function MarketplacePage() {
                 <code className="font-mono text-pampas/85">http://localhost:4280</code>. Use{" "}
                 <code className="font-mono text-pampas/85">make docker-down</code> to stop Docker.
               </p>
+              <p className="mt-2 text-xs text-pampas/60">
+                Session memory is available via CLI calls (
+                <code className="font-mono text-pampas/85">POST /sessions</code> and{" "}
+                <code className="font-mono text-pampas/85">POST /sessions/&lt;id&gt;/events</code>)
+                when you need it.
+              </p>
             </div>
           </div>
         </DialogContent>
@@ -264,6 +482,11 @@ export default function MarketplacePage() {
         open={isModalOpen}
         onOpenChange={setIsModalOpen}
         onCopy={() => handleCopy()}
+        onArchived={() => loadAgents({ silent: true })}
+        canManage={
+          !!selectedAgent &&
+          (showMine || ownedIds.has(selectedAgent.id))
+        }
       />
 
       {/* Toast */}

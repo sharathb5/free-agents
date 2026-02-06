@@ -5,11 +5,11 @@ import { Copy } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Agent } from "@/lib/agents"
+import { AgentSummary } from "@/lib/agents"
 import { cn } from "@/lib/utils"
 
 interface AgentCardProps {
-  agent: Agent
+  agent: AgentSummary
   onClick: () => void
   onCopy?: () => void
 }
@@ -36,9 +36,10 @@ const primitiveGlow: Record<string, { border: string; glow: string }> = {
 }
 
 export function AgentCard({ agent, onClick, onCopy }: AgentCardProps) {
+  const installCommand = `AGENT_PRESET=${agent.id} make run`
   const copyInstall = async (e: React.MouseEvent) => {
     e.stopPropagation()
-    await navigator.clipboard.writeText(agent.installCommand)
+    await navigator.clipboard.writeText(installCommand)
     onCopy?.()
   }
 
@@ -81,6 +82,24 @@ export function AgentCard({ agent, onClick, onCopy }: AgentCardProps) {
               <CardDescription className="text-sm line-clamp-2">
                 {agent.description}
               </CardDescription>
+              {agent.credits?.name && (
+                <div className="mt-2 text-xs text-pampas/60">
+                  Created by{" "}
+                  {agent.credits.url ? (
+                    <a
+                      href={agent.credits.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-rock-blue underline hover:text-pampas"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {agent.credits.name}
+                    </a>
+                  ) : (
+                    <span className="text-pampas/75">{agent.credits.name}</span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </CardHeader>
@@ -97,7 +116,15 @@ export function AgentCard({ agent, onClick, onCopy }: AgentCardProps) {
               >
                 {agent.primitive}
               </Badge>
-              {agent.tags.slice(0, 2).map((tag) => (
+              {agent.archived && (
+                <Badge
+                  variant="outline"
+                  className="text-xs border-amber-400/40 bg-amber-500/10 text-amber-200"
+                >
+                  archived
+                </Badge>
+              )}
+              {(agent.tags || []).slice(0, 2).map((tag) => (
                 <Badge
                   key={tag}
                   variant="outline"
@@ -112,7 +139,7 @@ export function AgentCard({ agent, onClick, onCopy }: AgentCardProps) {
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1 text-xs font-mono text-pampas/75">
                   <span className="text-pampas/45">$ </span>
-                  <span className="break-words">{agent.installCommand}</span>
+                  <span className="break-words">{installCommand}</span>
                 </div>
                 <Button
                   variant="ghost"

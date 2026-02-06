@@ -14,15 +14,21 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CodeBlock } from "@/components/CodeBlock"
-import { Agent } from "@/lib/agents"
+import { AgentDetail, AgentSummary } from "@/lib/agents"
 import { cn } from "@/lib/utils"
 import { Copy } from "lucide-react"
+import Link from "next/link"
+import { SignedIn, useAuth } from "@clerk/nextjs"
+
+const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4280"
 
 interface AgentDetailModalProps {
-  agent: Agent | null
+  agent: AgentSummary | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onCopy?: () => void
+  onArchived?: () => void
+  canManage?: boolean
 }
 
 const primitiveColors: Record<string, string> = {
@@ -36,11 +42,52 @@ export function AgentDetailModal({
   open,
   onOpenChange,
   onCopy,
+  onArchived,
+  canManage = false,
 }: AgentDetailModalProps) {
-  if (!agent) return null
+  const { getToken } = useAuth()
+  const [detail, setDetail] = React.useState<AgentDetail | null>(null)
+  const [detailError, setDetailError] = React.useState<string | null>(null)
+  const [detailLoading, setDetailLoading] = React.useState(false)
+  const [archiveStatus, setArchiveStatus] = React.useState<"idle" | "loading" | "ok" | "error">("idle")
+  const [archiveMessage, setArchiveMessage] = React.useState("")
+  const localRunCommand = agent ? `AGENT_PRESET=${agent.id} make run` : ""
+  const dockerRunCommand = agent ? `make docker-up AGENT=${agent.id}` : ""
+  const exampleCurl = agent
+    ? `# Agent: ${agent.name}\ncurl -X POST ${GATEWAY_URL}/agents/${agent.id}/invoke \\\n  -H "Content-Type: application/json" \\\n  -d '{\"input\": {}}'`
+    : ""
+  const inputSchema = detail?.input_schema
+  const outputSchema = detail?.output_schema
 
-  const localRunCommand = agent.installCommand
-  const dockerRunCommand = agent.dockerCommand
+  React.useEffect(() => {
+    if (!open || !agent) return
+    let active = true
+    const load = async () => {
+      setDetailLoading(true)
+      setDetailError(null)
+      try {
+        const res = await fetch(`${GATEWAY_URL}/agents/${agent.id}`)
+        const data = await res.json()
+        if (!active) return
+        if (res.ok) {
+          setDetail(data)
+        } else {
+          setDetailError(data?.error?.message || `Failed (${res.status})`)
+        }
+      } catch (e) {
+        if (!active) return
+        setDetailError(e instanceof Error ? e.message : "Request failed")
+      } finally {
+        if (active) setDetailLoading(false)
+      }
+    }
+    load()
+    return () => {
+      active = false
+    }
+  }, [agent?.id, open])
+
+  if (!agent) return null
 
   const handleCopyCommand = async () => {
     await navigator.clipboard.writeText(localRunCommand)
@@ -48,17 +95,85 @@ export function AgentDetailModal({
   }
 
   const handleCopyCurl = async () => {
-    await navigator.clipboard.writeText(agent.exampleInvoke.curl)
+    await navigator.clipboard.writeText(exampleCurl)
     onCopy?.()
   }
 
   const handleCopyInputSchema = async () => {
-    await navigator.clipboard.writeText(JSON.stringify(agent.inputSchema, null, 2))
+    if (!inputSchema) return
+    await navigator.clipboard.writeText(JSON.stringify(inputSchema, null, 2))
     onCopy?.()
   }
 
+  const handleArchive = async () => {
+    if (!agent) return
+    setArchiveStatus("loading")
+    setArchiveMessage("")
+    try {
+      const token = await getToken({
+        template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
+      })
+      if (!token) {
+        setArchiveStatus("error")
+        setArchiveMessage("Missing session token. Please sign in again.")
+        return
+      }
+      const res = await fetch(`${GATEWAY_URL}/agents/${agent.id}/archive`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (res.ok && data?.ok) {
+        setArchiveStatus("ok")
+        setArchiveMessage("Agent archived.")
+        onArchived?.()
+        onOpenChange(false)
+      } else {
+        setArchiveStatus("error")
+        setArchiveMessage(data?.error?.message || `Failed (${res.status})`)
+      }
+    } catch (e) {
+      setArchiveStatus("error")
+      setArchiveMessage(e instanceof Error ? e.message : "Request failed")
+    }
+  }
+
+  const handleUnarchive = async () => {
+    if (!agent) return
+    setArchiveStatus("loading")
+    setArchiveMessage("")
+    try {
+      const token = await getToken({
+        template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
+      })
+      if (!token) {
+        setArchiveStatus("error")
+        setArchiveMessage("Missing session token. Please sign in again.")
+        return
+      }
+      const res = await fetch(`${GATEWAY_URL}/agents/${agent.id}/unarchive`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (res.ok && data?.ok) {
+        setArchiveStatus("ok")
+        setArchiveMessage("Agent restored.")
+        onArchived?.()
+        onOpenChange(false)
+      } else {
+        setArchiveStatus("error")
+        setArchiveMessage(data?.error?.message || `Failed (${res.status})`)
+      }
+    } catch (e) {
+      setArchiveStatus("error")
+      setArchiveMessage(e instanceof Error ? e.message : "Request failed")
+    }
+  }
+
   const handleCopyOutputSchema = async () => {
-    await navigator.clipboard.writeText(JSON.stringify(agent.outputSchema, null, 2))
+    if (!outputSchema) return
+    await navigator.clipboard.writeText(JSON.stringify(outputSchema, null, 2))
     onCopy?.()
   }
 
@@ -88,7 +203,7 @@ export function AgentDetailModal({
             </div>
           </div>
           <div className="flex items-center gap-2 mt-4 flex-wrap">
-            {agent.tags.map((tag) => (
+            {(agent.tags || []).map((tag) => (
               <Badge
                 key={tag}
                 variant="outline"
@@ -119,17 +234,11 @@ export function AgentDetailModal({
                   </h3>
                   <p className="text-pampas/75">{agent.description}</p>
                 </div>
-                {agent.useCases && agent.useCases.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-semibold text-pampas mb-2">
-                      Use Cases
-                    </h3>
-                    <ul className="list-disc list-inside space-y-1 text-pampas/75">
-                      {agent.useCases.map((useCase, idx) => (
-                        <li key={idx}>{useCase}</li>
-                      ))}
-                    </ul>
-                  </div>
+                {detailLoading && (
+                  <p className="text-sm text-pampas/60">Loading details…</p>
+                )}
+                {detailError && (
+                  <p className="text-sm text-red-400">{detailError}</p>
                 )}
               </TabsContent>
 
@@ -165,6 +274,18 @@ export function AgentDetailModal({
                       Runs the gateway for this preset via Docker on{" "}
                       <code className="font-mono text-pampas/85">http://localhost:4280</code>.
                     </p>
+                    <p className="text-xs text-pampas/60">
+                      Session memory is available via CLI calls (
+                      <code className="font-mono text-pampas/85">POST /sessions</code> and{" "}
+                      <code className="font-mono text-pampas/85">POST /sessions/&lt;id&gt;/events</code>)
+                      when you need it.
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      <CodeBlock code={`curl -X POST ${GATEWAY_URL}/sessions`} />
+                      <CodeBlock
+                        code={`curl -X POST ${GATEWAY_URL}/sessions/<id>/events \\\n  -H "Content-Type: application/json" \\\n  -d '{\"events\": [{\"role\": \"user\", \"content\": \"Remember this note\"}]}'`}
+                      />
+                    </div>
                   </div>
                 </div>
               </TabsContent>
@@ -174,7 +295,7 @@ export function AgentDetailModal({
                   <h3 className="text-lg font-semibold text-pampas mb-2">
                     Invoke Endpoint
                   </h3>
-                  <CodeBlock code={agent.exampleInvoke.curl} onCopy={handleCopyCurl} />
+                  <CodeBlock code={exampleCurl} onCopy={handleCopyCurl} />
                 </div>
                 <Separator />
                 <div>
@@ -182,7 +303,7 @@ export function AgentDetailModal({
                     Example Input
                   </h3>
                   <CodeBlock
-                    code={JSON.stringify(agent.exampleInvoke.input, null, 2)}
+                    code={JSON.stringify({} as Record<string, any>, null, 2)}
                   />
                 </div>
                 <div>
@@ -190,7 +311,7 @@ export function AgentDetailModal({
                     Example Output
                   </h3>
                   <CodeBlock
-                    code={JSON.stringify(agent.exampleInvoke.output, null, 2)}
+                    code={JSON.stringify({} as Record<string, any>, null, 2)}
                   />
                 </div>
               </TabsContent>
@@ -201,10 +322,14 @@ export function AgentDetailModal({
                     Input Schema
                   </h3>
                   <div className="relative">
-                    <CodeBlock
-                      code={JSON.stringify(agent.inputSchema, null, 2)}
-                      onCopy={handleCopyInputSchema}
-                    />
+                    {inputSchema ? (
+                      <CodeBlock
+                        code={JSON.stringify(inputSchema, null, 2)}
+                        onCopy={handleCopyInputSchema}
+                      />
+                    ) : (
+                      <p className="text-sm text-pampas/60">Schema unavailable.</p>
+                    )}
                   </div>
                 </div>
                 <Separator />
@@ -213,24 +338,81 @@ export function AgentDetailModal({
                     Output Schema
                   </h3>
                   <div className="relative">
-                    <CodeBlock
-                      code={JSON.stringify(agent.outputSchema, null, 2)}
-                      onCopy={handleCopyOutputSchema}
-                    />
+                    {outputSchema ? (
+                      <CodeBlock
+                        code={JSON.stringify(outputSchema, null, 2)}
+                        onCopy={handleCopyOutputSchema}
+                      />
+                    ) : (
+                      <p className="text-sm text-pampas/60">Schema unavailable.</p>
+                    )}
                   </div>
                 </div>
               </TabsContent>
+
             </ScrollArea>
           </Tabs>
         </div>
 
         <Separator className="my-4" />
 
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {detail?.credits && (
+            <div className="text-xs text-pampas/65">
+              <span className="text-pampas/45">Created by:</span>{" "}
+              {detail.credits.url ? (
+                <a
+                  href={detail.credits.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-rock-blue underline hover:text-pampas"
+                >
+                  {detail.credits.name}
+                </a>
+              ) : (
+                <span className="text-pampas/75">{detail.credits.name}</span>
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <SignedIn>
+              {canManage && (
+                <>
+                  <Link
+                    href={`/upload?edit=1&id=${encodeURIComponent(agent.id)}`}
+                    className={cn(
+                      "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium",
+                      "border border-rock-blue/20 bg-pampas/6 text-pampas/80 hover:bg-pampas/10"
+                    )}
+                  >
+                    Edit
+                  </Link>
+                  {agent.archived ? (
+                    <Button
+                      variant="ghost"
+                      onClick={handleUnarchive}
+                      disabled={archiveStatus === "loading"}
+                      className="text-amber-200 hover:text-amber-100"
+                    >
+                      {archiveStatus === "loading" ? "Restoring..." : "Unarchive"}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      onClick={handleArchive}
+                      disabled={archiveStatus === "loading"}
+                      className="text-red-300 hover:text-red-200"
+                    >
+                      {archiveStatus === "loading" ? "Archiving..." : "Archive"}
+                    </Button>
+                  )}
+                </>
+              )}
+            </SignedIn>
           <Button
             variant="outline"
             onClick={() => {
-              navigator.clipboard.writeText(agent.exampleInvoke.curl)
+              navigator.clipboard.writeText(exampleCurl)
               onCopy?.()
             }}
             aria-label="Copy example curl for this agent"
@@ -245,7 +427,18 @@ export function AgentDetailModal({
             <Copy className="h-4 w-4 mr-2" />
             Copy run command
           </Button>
+          </div>
         </div>
+        {archiveMessage && (
+          <p
+            className={cn(
+              "text-xs",
+              archiveStatus === "ok" ? "text-green-300" : "text-red-400"
+            )}
+          >
+            {archiveMessage}
+          </p>
+        )}
       </DialogContent>
     </Dialog>
   )

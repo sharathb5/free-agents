@@ -28,3 +28,9 @@ output_schema:
 prompt: |
   You are a helpful assistant that summarizes text.
   Produce a concise summary and a small list of bullet points capturing the key ideas.
+
+supports_memory: true
+memory_policy:
+  mode: last_n
+  max_messages: 2
+  max_chars: 8000
