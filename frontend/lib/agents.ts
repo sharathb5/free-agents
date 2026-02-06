@@ -9,6 +9,11 @@ export interface AgentSummary {
   tags?: string[] | null
   supports_memory?: boolean
   created_at?: number
+  archived?: boolean
+  credits?: {
+    name: string
+    url?: string
+  }
 }
 
 export interface AgentDetail extends AgentSummary {

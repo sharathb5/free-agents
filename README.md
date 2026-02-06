@@ -229,7 +229,9 @@ Set **`CORS_ORIGINS`** so the frontend can call the gateway (e.g. Session tab). 
 - **`OPENROUTER_API_KEY`**: required when `PROVIDER=openrouter`. Get a key at [openrouter.ai/keys](https://openrouter.ai/keys).
 - **`OPENROUTER_MODEL`**: optional model id (default: `openai/gpt-4o-mini`). See [openrouter.ai/models](https://openrouter.ai/models).
 - **`OPENAI_API_KEY`** / **`OPENAI_MODEL`**: optional, for direct OpenAI when `PROVIDER=openai`.
-- **`SESSION_DB_PATH`**: path to SQLite DB for session store (default: `./data/sessions.db`).
+- **`DATABASE_URL`**: Postgres connection string (Supabase). When set, Postgres is used for registry + sessions.
+- **`DB_PATH`**: path to SQLite DB when `DATABASE_URL` is not set (default: `./data/gateway.db`).
+- **`SESSION_DB_PATH`**: legacy alias for `DB_PATH` (still supported).
 - **`CORS_ORIGINS`**: comma-separated origins for CORS (default: `*`). Use e.g. `http://localhost:3000` for the frontend Session tab.
 - **`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`**: Clerk publishable key for the frontend.
 - **`CLERK_SECRET_KEY`**: Clerk secret key for the frontend server.

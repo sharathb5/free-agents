@@ -14,10 +14,11 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CodeBlock } from "@/components/CodeBlock"
-import { Input } from "@/components/ui/input"
 import { AgentDetail, AgentSummary } from "@/lib/agents"
 import { cn } from "@/lib/utils"
 import { Copy } from "lucide-react"
+import Link from "next/link"
+import { SignedIn, useAuth } from "@clerk/nextjs"
 
 const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4280"
 
@@ -26,6 +27,8 @@ interface AgentDetailModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onCopy?: () => void
+  onArchived?: () => void
+  canManage?: boolean
 }
 
 const primitiveColors: Record<string, string> = {
@@ -39,19 +42,19 @@ export function AgentDetailModal({
   open,
   onOpenChange,
   onCopy,
+  onArchived,
+  canManage = false,
 }: AgentDetailModalProps) {
+  const { getToken } = useAuth()
   const [detail, setDetail] = React.useState<AgentDetail | null>(null)
   const [detailError, setDetailError] = React.useState<string | null>(null)
   const [detailLoading, setDetailLoading] = React.useState(false)
-  const [sessionId, setSessionId] = React.useState<string | null>(null)
-  const [sessionError, setSessionError] = React.useState<string | null>(null)
-  const [note, setNote] = React.useState("")
-  const [noteStatus, setNoteStatus] = React.useState<"idle" | "loading" | "ok" | "error">("idle")
-
+  const [archiveStatus, setArchiveStatus] = React.useState<"idle" | "loading" | "ok" | "error">("idle")
+  const [archiveMessage, setArchiveMessage] = React.useState("")
   const localRunCommand = agent ? `AGENT_PRESET=${agent.id} make run` : ""
   const dockerRunCommand = agent ? `make docker-up AGENT=${agent.id}` : ""
   const exampleCurl = agent
-    ? `curl -X POST ${GATEWAY_URL}/agents/${agent.id}/invoke \\\n  -H "Content-Type: application/json" \\\n  -d '{\"input\": {}}'`
+    ? `# Agent: ${agent.name}\ncurl -X POST ${GATEWAY_URL}/agents/${agent.id}/invoke \\\n  -H "Content-Type: application/json" \\\n  -d '{\"input\": {}}'`
     : ""
   const inputSchema = detail?.input_schema
   const outputSchema = detail?.output_schema
@@ -86,42 +89,6 @@ export function AgentDetailModal({
 
   if (!agent) return null
 
-  const handleCreateSession = async () => {
-    setSessionError(null)
-    try {
-      const res = await fetch(`${GATEWAY_URL}/sessions`, { method: "POST" })
-      const data = await res.json()
-      if (res.ok && data.session_id) {
-        setSessionId(data.session_id)
-      } else {
-        setSessionError(data?.error?.message || `Failed (${res.status})`)
-      }
-    } catch (e) {
-      setSessionError(e instanceof Error ? e.message : "Request failed")
-    }
-  }
-
-  const handleAddNote = async () => {
-    if (!sessionId || !note.trim()) return
-    setNoteStatus("loading")
-    try {
-      const res = await fetch(`${GATEWAY_URL}/sessions/${sessionId}/events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ events: [{ role: "user", content: note.trim() }] }),
-      })
-      const data = await res.json()
-      if (res.ok && data.ok) {
-        setNoteStatus("ok")
-        setNote("")
-      } else {
-        setNoteStatus("error")
-      }
-    } catch {
-      setNoteStatus("error")
-    }
-  }
-
   const handleCopyCommand = async () => {
     await navigator.clipboard.writeText(localRunCommand)
     onCopy?.()
@@ -136,6 +103,72 @@ export function AgentDetailModal({
     if (!inputSchema) return
     await navigator.clipboard.writeText(JSON.stringify(inputSchema, null, 2))
     onCopy?.()
+  }
+
+  const handleArchive = async () => {
+    if (!agent) return
+    setArchiveStatus("loading")
+    setArchiveMessage("")
+    try {
+      const token = await getToken({
+        template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
+      })
+      if (!token) {
+        setArchiveStatus("error")
+        setArchiveMessage("Missing session token. Please sign in again.")
+        return
+      }
+      const res = await fetch(`${GATEWAY_URL}/agents/${agent.id}/archive`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (res.ok && data?.ok) {
+        setArchiveStatus("ok")
+        setArchiveMessage("Agent archived.")
+        onArchived?.()
+        onOpenChange(false)
+      } else {
+        setArchiveStatus("error")
+        setArchiveMessage(data?.error?.message || `Failed (${res.status})`)
+      }
+    } catch (e) {
+      setArchiveStatus("error")
+      setArchiveMessage(e instanceof Error ? e.message : "Request failed")
+    }
+  }
+
+  const handleUnarchive = async () => {
+    if (!agent) return
+    setArchiveStatus("loading")
+    setArchiveMessage("")
+    try {
+      const token = await getToken({
+        template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
+      })
+      if (!token) {
+        setArchiveStatus("error")
+        setArchiveMessage("Missing session token. Please sign in again.")
+        return
+      }
+      const res = await fetch(`${GATEWAY_URL}/agents/${agent.id}/unarchive`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await res.json()
+      if (res.ok && data?.ok) {
+        setArchiveStatus("ok")
+        setArchiveMessage("Agent restored.")
+        onArchived?.()
+        onOpenChange(false)
+      } else {
+        setArchiveStatus("error")
+        setArchiveMessage(data?.error?.message || `Failed (${res.status})`)
+      }
+    } catch (e) {
+      setArchiveStatus("error")
+      setArchiveMessage(e instanceof Error ? e.message : "Request failed")
+    }
   }
 
   const handleCopyOutputSchema = async () => {
@@ -186,12 +219,11 @@ export function AgentDetailModal({
 
         <div className="flex-1 overflow-hidden">
           <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="install">Get set up</TabsTrigger>
               <TabsTrigger value="api">API</TabsTrigger>
               <TabsTrigger value="schema">Schema</TabsTrigger>
-              <TabsTrigger value="session">Session</TabsTrigger>
             </TabsList>
 
             <ScrollArea className="h-[calc(90vh-350px)] max-h-[600px] mt-4">
@@ -242,6 +274,18 @@ export function AgentDetailModal({
                       Runs the gateway for this preset via Docker on{" "}
                       <code className="font-mono text-pampas/85">http://localhost:4280</code>.
                     </p>
+                    <p className="text-xs text-pampas/60">
+                      Session memory is available via CLI calls (
+                      <code className="font-mono text-pampas/85">POST /sessions</code> and{" "}
+                      <code className="font-mono text-pampas/85">POST /sessions/&lt;id&gt;/events</code>)
+                      when you need it.
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      <CodeBlock code={`curl -X POST ${GATEWAY_URL}/sessions`} />
+                      <CodeBlock
+                        code={`curl -X POST ${GATEWAY_URL}/sessions/<id>/events \\\n  -H "Content-Type: application/json" \\\n  -d '{\"events\": [{\"role\": \"user\", \"content\": \"Remember this note\"}]}'`}
+                      />
+                    </div>
                   </div>
                 </div>
               </TabsContent>
@@ -306,59 +350,65 @@ export function AgentDetailModal({
                 </div>
               </TabsContent>
 
-              <TabsContent value="session" className="space-y-4">
-                <h3 className="text-lg font-semibold text-pampas mb-2">
-                  Session memory
-                </h3>
-                <p className="text-sm text-pampas/75">
-                  Create a session to use with <code className="font-mono text-pampas/85">/invoke</code> and optional <code className="font-mono text-pampas/85">context.session_id</code>. Gateway: <code className="font-mono text-pampas/85">{GATEWAY_URL}</code>
-                </p>
-                <div className="space-y-2">
-                  <Button type="button" variant="outline" onClick={handleCreateSession}>
-                    Create session
-                  </Button>
-                  {sessionError && (
-                    <p className="text-sm text-red-400">{sessionError}</p>
-                  )}
-                  {sessionId && (
-                    <div className="space-y-2 mt-2">
-                      <p className="text-sm text-pampas/80">Session ID:</p>
-                      <CodeBlock
-                        code={sessionId}
-                        onCopy={async () => {
-                          await navigator.clipboard.writeText(sessionId)
-                          onCopy?.()
-                        }}
-                      />
-                      <div className="flex gap-2 items-center flex-wrap">
-                        <Input
-                          placeholder="Add a note (event)"
-                          value={note}
-                          onChange={(e) => setNote(e.target.value)}
-                          className="max-w-xs"
-                        />
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={handleAddNote}
-                          disabled={!note.trim() || noteStatus === "loading"}
-                        >
-                          {noteStatus === "loading" ? "Sending…" : "Add note"}
-                        </Button>
-                        {noteStatus === "ok" && <span className="text-sm text-green-400">Added</span>}
-                        {noteStatus === "error" && <span className="text-sm text-red-400">Failed</span>}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </TabsContent>
             </ScrollArea>
           </Tabs>
         </div>
 
         <Separator className="my-4" />
 
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {detail?.credits && (
+            <div className="text-xs text-pampas/65">
+              <span className="text-pampas/45">Created by:</span>{" "}
+              {detail.credits.url ? (
+                <a
+                  href={detail.credits.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-rock-blue underline hover:text-pampas"
+                >
+                  {detail.credits.name}
+                </a>
+              ) : (
+                <span className="text-pampas/75">{detail.credits.name}</span>
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <SignedIn>
+              {canManage && (
+                <>
+                  <Link
+                    href={`/upload?edit=1&id=${encodeURIComponent(agent.id)}`}
+                    className={cn(
+                      "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium",
+                      "border border-rock-blue/20 bg-pampas/6 text-pampas/80 hover:bg-pampas/10"
+                    )}
+                  >
+                    Edit
+                  </Link>
+                  {agent.archived ? (
+                    <Button
+                      variant="ghost"
+                      onClick={handleUnarchive}
+                      disabled={archiveStatus === "loading"}
+                      className="text-amber-200 hover:text-amber-100"
+                    >
+                      {archiveStatus === "loading" ? "Restoring..." : "Unarchive"}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      onClick={handleArchive}
+                      disabled={archiveStatus === "loading"}
+                      className="text-red-300 hover:text-red-200"
+                    >
+                      {archiveStatus === "loading" ? "Archiving..." : "Archive"}
+                    </Button>
+                  )}
+                </>
+              )}
+            </SignedIn>
           <Button
             variant="outline"
             onClick={() => {
@@ -377,7 +427,18 @@ export function AgentDetailModal({
             <Copy className="h-4 w-4 mr-2" />
             Copy run command
           </Button>
+          </div>
         </div>
+        {archiveMessage && (
+          <p
+            className={cn(
+              "text-xs",
+              archiveStatus === "ok" ? "text-green-300" : "text-red-400"
+            )}
+          >
+            {archiveMessage}
+          </p>
+        )}
       </DialogContent>
     </Dialog>
   )

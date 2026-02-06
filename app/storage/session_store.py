@@ -1,5 +1,5 @@
 """
-Session store: SQLite-backed sessions and events.
+Session store: SQLite- or Postgres-backed sessions and events.
 
 Sessions table: (id, agent_id, created_at)
 Events table: (id, session_id, role, content, ts, meta)
@@ -11,27 +11,22 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sqlite3
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from app.config import get_settings
+from app.storage.db import connect, is_postgres, sql
 
 logger = logging.getLogger("agent-gateway")
 
+def _ensure_sqlite_dir() -> None:
+    if is_postgres():
+        return
+    from app.config import get_settings
 
-def _db_path() -> str:
-    return get_settings().db_path
-
-
-def _connect() -> sqlite3.Connection:
-    path = _db_path()
+    path = get_settings().db_path
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
-    return conn
 
 
 def init_db() -> None:
@@ -39,32 +34,58 @@ def init_db() -> None:
     Create tables and set PRAGMAs.
     Call at app startup (lifespan or startup event).
     """
-    with _connect() as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=3000")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL,
-                created_at TEXT NOT NULL
+    _ensure_sqlite_dir()
+    with connect() as conn:
+        if not is_postgres():
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA busy_timeout=3000")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
             )
-            """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                ts TEXT,
-                meta TEXT,
-                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    ts TEXT,
+                    meta TEXT,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                )
+                """
             )
-            """
-        )
+        else:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    id BIGSERIAL PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    ts TEXT,
+                    meta TEXT,
+                    FOREIGN KEY (session_id) REFERENCES sessions(id)
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_session_id ON events (session_id)")
         conn.commit()
 
 
@@ -73,9 +94,9 @@ def create_session(agent_id: str) -> str:
     init_db()  # Idempotent; ensures tables exist when TestClient doesn't run lifespan before first request
     session_id = str(uuid.uuid4())
     created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    with _connect() as conn:
+    with connect() as conn:
         conn.execute(
-            "INSERT INTO sessions (id, agent_id, created_at) VALUES (?, ?, ?)",
+            sql("INSERT INTO sessions (id, agent_id, created_at) VALUES (?, ?, ?)"),
             (session_id, agent_id, created_at),
         )
         conn.commit()
@@ -90,8 +111,8 @@ def append_events(session_id: str, events: List[Dict[str, Any]]) -> int:
     if not events:
         return 0
     init_db()  # Idempotent; ensures tables exist when TestClient doesn't run lifespan before first request
-    with _connect() as conn:
-        cur = conn.execute("SELECT id FROM sessions WHERE id = ?", (session_id,))
+    with connect() as conn:
+        cur = conn.execute(sql("SELECT id FROM sessions WHERE id = ?"), (session_id,))
         if cur.fetchone() is None:
             return 0
         appended = 0
@@ -101,7 +122,7 @@ def append_events(session_id: str, events: List[Dict[str, Any]]) -> int:
             ts = ev.get("ts") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             meta = json.dumps(ev.get("meta")) if ev.get("meta") is not None else None
             conn.execute(
-                "INSERT INTO events (session_id, role, content, ts, meta) VALUES (?, ?, ?, ?, ?)",
+                sql("INSERT INTO events (session_id, role, content, ts, meta) VALUES (?, ?, ?, ?, ?)"),
                 (session_id, role, content, ts, meta),
             )
             appended += 1
@@ -115,9 +136,9 @@ def get_session(session_id: str) -> Optional[Dict[str, Any]]:
     or None when session not found. Do not raise.
     """
     init_db()  # Idempotent; ensures tables exist when TestClient doesn't run lifespan before first request
-    with _connect() as conn:
+    with connect() as conn:
         row = conn.execute(
-            "SELECT id, agent_id, created_at FROM sessions WHERE id = ?",
+            sql("SELECT id, agent_id, created_at FROM sessions WHERE id = ?"),
             (session_id,),
         ).fetchone()
         if row is None:
@@ -130,7 +151,7 @@ def get_session(session_id: str) -> Optional[Dict[str, Any]]:
             "running_summary": "",
         }
         events_rows = conn.execute(
-            "SELECT id, session_id, role, content, ts, meta FROM events WHERE session_id = ? ORDER BY id",
+            sql("SELECT id, session_id, role, content, ts, meta FROM events WHERE session_id = ? ORDER BY id"),
             (session_id,),
         ).fetchall()
         for e in events_rows:

@@ -5,10 +5,12 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from .rate_limit import RateRule, SimpleRateLimiter
 
 from .config import get_settings
+from .storage.db import get_db_info
 from .dependencies import AuthError, get_provider
 from .engine import (
     build_error_envelope,
@@ -28,6 +30,12 @@ logger = logging.getLogger("agent-gateway")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize DB and teardown on shutdown."""
+    db_info = get_db_info()
+    logger.info(
+        "DB: %s (%s)",
+        db_info.dialect,
+        "DATABASE_URL set" if db_info.database_url else "DATABASE_URL not set",
+    )
     session_store.init_db()
     registry_store.init_registry_db()
     registry_store.seed_from_presets(PRESETS_DIR)
@@ -48,6 +56,46 @@ app.add_middleware(
 )
 app.include_router(agents_router.router)
 app.include_router(sessions_router.router)
+
+rate_limiter = SimpleRateLimiter(
+    rules={
+        "register": RateRule(key="register", limit=30, window_seconds=60),
+        "invoke": RateRule(key="invoke", limit=120, window_seconds=60),
+        "archive": RateRule(key="archive", limit=60, window_seconds=60),
+    }
+)
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    path = request.url.path
+    method = request.method.upper()
+    client_host = request.client.host if request.client else "unknown"
+
+    rule_key = None
+    if method == "POST" and path == "/agents/register":
+        rule_key = "register"
+    elif method == "POST" and path.endswith("/invoke") and path.startswith("/agents/"):
+        rule_key = "invoke"
+    elif method == "POST" and path.startswith("/agents/") and (
+        path.endswith("/archive") or path.endswith("/unarchive")
+    ):
+        rule_key = "archive"
+
+    if rule_key is not None:
+        allowed = await rate_limiter.allow(rule_key, client_host)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "error": {
+                        "code": "RATE_LIMITED",
+                        "message": "Too many requests. Please retry shortly.",
+                    }
+                },
+            )
+
+    return await call_next(request)
 
 
 @app.get("/")
