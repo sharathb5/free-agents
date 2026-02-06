@@ -3,6 +3,7 @@
 import * as React from "react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
+import { Suspense } from "react"
 import { ArrowLeft, UploadCloud } from "lucide-react"
 import { SignInButton, SignedIn, SignedOut, UserButton, useAuth, useUser } from "@clerk/nextjs"
 import { Button } from "@/components/ui/button"
@@ -10,7 +11,7 @@ import { Input } from "@/components/ui/input"
 
 const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4280"
 
-export default function UploadAgentPage() {
+function UploadAgentForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { isSignedIn, getToken } = useAuth()
@@ -463,5 +464,13 @@ export default function UploadAgentPage() {
         </div>
       </main>
     </div>
+  )
+}
+
+export default function UploadAgentPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen selection-palette" />}>
+      <UploadAgentForm />
+    </Suspense>
   )
 }
