@@ -23,21 +23,27 @@ export function CodeBlock({ code, language, className, onCopy }: CodeBlockProps)
   }
 
   return (
-    <div className={cn("relative group", className)}>
-      <pre className="overflow-x-auto rounded-xl bg-pampas/6 border border-rock-blue/15 p-4 text-sm shadow-[inset_0_1px_0_rgba(240,237,232,0.06)]">
-        <code className="text-pampas/90 font-mono whitespace-pre">{code}</code>
+    <div className={cn("relative overflow-visible", className)}>
+      <pre className="overflow-hidden rounded-xl bg-pampas/6 border border-rock-blue/15 p-4 pr-16 text-sm shadow-[inset_0_1px_0_rgba(240,237,232,0.06)]">
+        <code className="text-pampas/90 font-mono whitespace-pre-wrap break-words">{code}</code>
       </pre>
       <Button
         variant="ghost"
-        size="icon"
-        className="absolute top-2 right-2 h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity border border-rock-blue/15 bg-kilamanjaro/40 hover:bg-kilamanjaro/60"
+        size="sm"
+        className="absolute top-2 right-2 z-50 h-8 px-2 opacity-100 border border-rock-blue/40 bg-pampas/20 backdrop-blur hover:bg-pampas/30 shadow-md text-xs text-pampas/85 flex items-center gap-1"
         onClick={handleCopy}
         aria-label="Copy code"
       >
         {copied ? (
-          <Check className="h-4 w-4 text-olive-green" />
+          <>
+            <Check className="h-4 w-4 text-olive-green" />
+            <span>Copied</span>
+          </>
         ) : (
-          <Copy className="h-4 w-4 text-pampas/80" />
+          <>
+            <Copy className="h-4 w-4 text-pampas/80" />
+            <span>Copy</span>
+          </>
         )}
       </Button>
     </div>
