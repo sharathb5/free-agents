@@ -44,9 +44,12 @@ export default function MarketplacePage() {
 
   const REPO_CLONE_COMMAND = "pip install agent-toolbox"
   const PROJECT_SETUP_COMMAND = "agent-toolbox setup"
-  const LOCAL_RUN_EXAMPLE = "AGENT_PRESET=summarizer agent-toolbox"
-  const WINDOWS_RUN_EXAMPLE = `$env:AGENT_PRESET=\"summarizer\"\nagent-toolbox`
-  const DOCKER_RUN_EXAMPLE = "make docker-up AGENT=summarizer"
+  const LOCAL_RUN_EXAMPLE =
+    "AGENT_PRESET=summarizer nohup agent-toolbox > agent-toolbox.log 2>&1 &"
+  const WINDOWS_RUN_EXAMPLE =
+    "$env:AGENT_PRESET=\"summarizer\"\nStart-Process -NoNewWindow agent-toolbox -RedirectStandardOutput agent-toolbox.log -RedirectStandardError agent-toolbox.err"
+  const DOCKER_RUN_EXAMPLE =
+    "docker run -d --name agent-toolbox -p 4280:4280 -e AGENT_PRESET=summarizer ghcr.io/sharathb5/agent-toolbox:latest"
 
   React.useEffect(() => {
     if (showMine) return

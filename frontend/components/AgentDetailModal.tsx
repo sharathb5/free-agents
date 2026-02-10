@@ -52,12 +52,14 @@ export function AgentDetailModal({
   const [archiveStatus, setArchiveStatus] = React.useState<"idle" | "loading" | "ok" | "error">("idle")
   const [archiveMessage, setArchiveMessage] = React.useState("")
   const localRunCommand = agent
-    ? `source .venv/bin/activate\nAGENT_PRESET=${agent.id} agent-toolbox`
+    ? `source .venv/bin/activate\nAGENT_PRESET=${agent.id} nohup agent-toolbox > agent-toolbox.log 2>&1 &`
     : ""
   const windowsRunCommand = agent
-    ? `.\.venv\\Scripts\\activate\n$env:AGENT_PRESET="${agent.id}"\nagent-toolbox`
+    ? `.\.venv\\Scripts\\activate\n$env:AGENT_PRESET="${agent.id}"\nStart-Process -NoNewWindow agent-toolbox -RedirectStandardOutput agent-toolbox.log -RedirectStandardError agent-toolbox.err`
     : ""
-  const dockerRunCommand = agent ? `make docker-up AGENT=${agent.id}` : ""
+  const dockerRunCommand = agent
+    ? `docker run -d --name agent-toolbox -p 4280:4280 -e AGENT_PRESET=${agent.id} ghcr.io/sharathb5/agent-toolbox:latest`
+    : ""
   const inputSchema = detail?.input_schema
   const outputSchema = detail?.output_schema
   const [exampleInput, setExampleInput] = React.useState<Record<string, any> | null>(null)
