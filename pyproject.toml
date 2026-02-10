@@ -46,4 +46,4 @@ where = ["."]
 include = ["app*"]
 
 [tool.setuptools.package-data]
-app = ["presets/*.yaml"]
+app = ["presets/*.yaml", "examples.json"]

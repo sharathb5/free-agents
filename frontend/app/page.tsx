@@ -44,7 +44,8 @@ export default function MarketplacePage() {
 
   const REPO_CLONE_COMMAND = "pip install agent-toolbox"
   const PROJECT_SETUP_COMMAND = "agent-toolbox setup"
-  const LOCAL_RUN_EXAMPLE = "AGENT_PRESET=summarizer make run"
+  const LOCAL_RUN_EXAMPLE = "AGENT_PRESET=summarizer agent-toolbox"
+  const WINDOWS_RUN_EXAMPLE = `$env:AGENT_PRESET=\"summarizer\"\nagent-toolbox`
   const DOCKER_RUN_EXAMPLE = "make docker-up AGENT=summarizer"
 
   React.useEffect(() => {
@@ -446,8 +447,8 @@ export default function MarketplacePage() {
                 >
                   openrouter.ai/keys
                 </a>
-                . Run <code className="font-mono text-pampas/85">agent-toolbox setup</code> in the
-                repo to see the full setup block.
+                . Run <code className="font-mono text-pampas/85">agent-toolbox setup</code> in your
+                project folder to see the full setup block.
               </p>
             </div>
 
@@ -458,6 +459,7 @@ export default function MarketplacePage() {
               </p>
               <div className="mt-1 space-y-2">
                 <CodeBlock code={LOCAL_RUN_EXAMPLE} />
+                <CodeBlock code={WINDOWS_RUN_EXAMPLE} />
                 <CodeBlock code={DOCKER_RUN_EXAMPLE} />
               </div>
               <p className="mt-1 text-xs text-pampas/60">

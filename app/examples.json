@@ -1,0 +1,68 @@
+{
+  "summarizer": {
+    "input": {
+      "text": "OpenAI released a new model that improves reasoning and tool use."
+    },
+    "output": {
+      "summary": "A new OpenAI model improves reasoning and tool use.",
+      "bullets": ["Improved reasoning", "Better tool use"]
+    }
+  },
+  "classifier": {
+    "input": {
+      "items": [
+        {"id": "1", "content": "Reset my password"},
+        {"id": "2", "content": "Pricing question"}
+      ],
+      "categories": ["support", "sales", "other"]
+    },
+    "output": {
+      "classifications": [
+        {"item_id": "1", "category": "support", "confidence": 0.92},
+        {"item_id": "2", "category": "sales", "confidence": 0.88}
+      ]
+    }
+  },
+  "extractor": {
+    "input": {
+      "text": "Order 5521 was placed by Ana Gomez for 3 units of Item A on 2024-05-02.",
+      "schema": {
+        "order_id": "Order identifier",
+        "customer": "Customer name",
+        "date": "Order date",
+        "quantity": "Units ordered"
+      }
+    },
+    "output": {
+      "data": {
+        "order_id": "5521",
+        "customer": "Ana Gomez",
+        "date": "2024-05-02",
+        "quantity": "3"
+      },
+      "confidence": 0.86
+    }
+  },
+  "meeting_notes": {
+    "input": {
+      "transcript": "We agreed to ship v1 on Friday. Alex will own the landing page by Thursday."
+    },
+    "output": {
+      "summary": "Team agreed on v1 ship date and ownership.",
+      "decisions": ["Ship v1 on Friday"],
+      "action_items": [{"owner": "Alex", "task": "Landing page", "deadline": "Thursday"}]
+    }
+  },
+  "triage": {
+    "input": {
+      "email_content": "I was charged twice this month. Can you fix it?",
+      "mailbox_context": "B2C subscription support"
+    },
+    "output": {
+      "category": "support",
+      "priority": "high",
+      "should_escalate": true,
+      "draft_response": "Sorry about the duplicate charge. We will refund the extra amount and confirm by email."
+    }
+  }
+}

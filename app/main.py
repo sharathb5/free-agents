@@ -18,6 +18,7 @@ from .engine import (
     process_invoke_request,
 )
 from .preset_loader import PRESETS_DIR, PresetLoadError, get_active_preset
+from .examples import get_example
 from .routers import agents as agents_router
 from .routers import sessions as sessions_router
 from .storage import registry_store
@@ -123,6 +124,7 @@ async def root() -> Dict[str, Any]:
         "version": preset.version,
         "docs": "/docs",
         "schema": "/schema",
+        "examples": "/examples",
         "health": "/health",
     }
 
@@ -179,6 +181,45 @@ async def schema() -> JSONResponse:
         "primitive": preset.primitive,
         "input_schema": preset.input_schema,
         "output_schema": preset.output_schema,
+    }
+    return JSONResponse(status_code=200, content=payload)
+
+
+@app.get("/examples")
+async def examples() -> JSONResponse:
+    """
+    Return plug-and-play input/output examples for the active preset.
+    """
+    request_id = new_request_id()
+    try:
+        preset = get_active_preset()
+    except PresetLoadError as exc:
+        status_code, body = build_error_envelope(
+            request_id=request_id,
+            preset=None,
+            status_code=500,
+            code="INTERNAL_ERROR",
+            message=str(exc),
+            details=None,
+        )
+        return JSONResponse(status_code=status_code, content=body)
+
+    example = get_example(preset.id)
+    if example is None:
+        status_code, body = build_error_envelope(
+            request_id=request_id,
+            preset=preset,
+            status_code=404,
+            code="EXAMPLE_NOT_FOUND",
+            message=f"No example found for preset '{preset.id}'",
+            details=None,
+        )
+        return JSONResponse(status_code=status_code, content=body)
+
+    payload = {
+        "agent": preset.id,
+        "version": preset.version,
+        "example": example,
     }
     return JSONResponse(status_code=200, content=payload)
 

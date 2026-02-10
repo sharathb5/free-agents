@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import get_settings
 from app.dependencies import AuthError, get_provider, require_clerk_user_id
+from app.examples import get_example
 from app.engine import build_error_envelope, new_request_id, process_invoke_for_preset
 from app.preset_loader import PresetLoadError, get_active_preset
 from app.registry_adapter import spec_to_preset
@@ -296,6 +297,17 @@ async def get_agents_schema(agent_id: str, version: Optional[str] = None) -> JSO
     if schema is None:
         return _agents_error(404, "AGENT_NOT_FOUND", f"Agent not found: {agent_id}")
     return JSONResponse(status_code=200, content=schema)
+
+
+@router.get("/{agent_id}/examples")
+async def get_agents_examples(agent_id: str) -> JSONResponse:
+    """
+    Return plug-and-play input/output examples for a preset-backed agent id.
+    """
+    example = get_example(agent_id)
+    if example is None:
+        return _agents_error(404, "EXAMPLE_NOT_FOUND", f"No example found for agent: {agent_id}")
+    return JSONResponse(status_code=200, content={"agent": agent_id, "example": example})
 
 
 @router.post("/{agent_id}/invoke")

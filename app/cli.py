@@ -28,8 +28,9 @@ def _print_setup_banner(
     if for_startup:
         print("Provider: {} ({})".format(provider, provider_note))
     print()
-    print("Docs:   {}/docs".format(base))
-    print("Schema: {}/schema".format(base))
+    print("Docs:     {}/docs".format(base))
+    print("Schema:   {}/schema".format(base))
+    print("Examples: {}/examples".format(base))
     print()
     print("────────────────────────────────────────────")
     print("Get an API key from OpenRouter (one key for many models):")

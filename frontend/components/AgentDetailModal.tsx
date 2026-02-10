@@ -51,13 +51,20 @@ export function AgentDetailModal({
   const [detailLoading, setDetailLoading] = React.useState(false)
   const [archiveStatus, setArchiveStatus] = React.useState<"idle" | "loading" | "ok" | "error">("idle")
   const [archiveMessage, setArchiveMessage] = React.useState("")
-  const localRunCommand = agent ? `AGENT_PRESET=${agent.id} make run` : ""
-  const dockerRunCommand = agent ? `make docker-up AGENT=${agent.id}` : ""
-  const exampleCurl = agent
-    ? `# Agent: ${agent.name}\ncurl -X POST ${GATEWAY_URL}/agents/${agent.id}/invoke \\\n  -H "Content-Type: application/json" \\\n  -d '{\"input\": {}}'`
+  const localRunCommand = agent
+    ? `source .venv/bin/activate\nAGENT_PRESET=${agent.id} agent-toolbox`
     : ""
+  const windowsRunCommand = agent
+    ? `.\.venv\\Scripts\\activate\n$env:AGENT_PRESET="${agent.id}"\nagent-toolbox`
+    : ""
+  const dockerRunCommand = agent ? `make docker-up AGENT=${agent.id}` : ""
   const inputSchema = detail?.input_schema
   const outputSchema = detail?.output_schema
+  const [exampleInput, setExampleInput] = React.useState<Record<string, any> | null>(null)
+  const [exampleOutput, setExampleOutput] = React.useState<Record<string, any> | null>(null)
+  const exampleCurl = agent
+    ? `# Agent: ${agent.name}\ncurl -X POST ${GATEWAY_URL}/agents/${agent.id}/invoke \\\n  -H "Content-Type: application/json" \\\n  -d '${JSON.stringify({ input: exampleInput ?? {} })}'`
+    : ""
 
   React.useEffect(() => {
     if (!open || !agent) return
@@ -66,13 +73,25 @@ export function AgentDetailModal({
       setDetailLoading(true)
       setDetailError(null)
       try {
-        const res = await fetch(`${GATEWAY_URL}/agents/${agent.id}`)
-        const data = await res.json()
+        const [detailRes, exampleRes] = await Promise.all([
+          fetch(`${GATEWAY_URL}/agents/${agent.id}`),
+          fetch(`${GATEWAY_URL}/agents/${agent.id}/examples`),
+        ])
+        const data = await detailRes.json()
         if (!active) return
-        if (res.ok) {
+        if (detailRes.ok) {
           setDetail(data)
         } else {
-          setDetailError(data?.error?.message || `Failed (${res.status})`)
+          setDetailError(data?.error?.message || `Failed (${detailRes.status})`)
+        }
+        if (exampleRes.ok) {
+          const exampleData = await exampleRes.json()
+          const example = exampleData?.example || null
+          setExampleInput(example?.input || null)
+          setExampleOutput(example?.output || null)
+        } else {
+          setExampleInput(null)
+          setExampleOutput(null)
         }
       } catch (e) {
         if (!active) return
@@ -219,11 +238,10 @@ export function AgentDetailModal({
 
         <div className="flex-1 overflow-hidden">
           <Tabs defaultValue="overview" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="install">Get set up</TabsTrigger>
-              <TabsTrigger value="api">API</TabsTrigger>
-              <TabsTrigger value="schema">Schema</TabsTrigger>
+              <TabsTrigger value="api">API + Schema</TabsTrigger>
             </TabsList>
 
             <ScrollArea className="h-[calc(90vh-350px)] max-h-[600px] mt-4">
@@ -244,19 +262,34 @@ export function AgentDetailModal({
 
               <TabsContent value="install" className="space-y-6">
                 <p className="text-sm text-pampas/75">
-                  If you haven&apos;t already, clone the repo and run <code className="font-mono text-pampas/85">make install</code> once. For real LLM output, set up OpenRouter (API key in <code className="font-mono text-pampas/85">.env</code>) — see Get set up on the home page.
+                  Install via pip and run the preset locally. For real LLM output, set up OpenRouter (API key in{" "}
+                  <code className="font-mono text-pampas/85">.env</code>) — see Get set up on the home page.
                 </p>
 
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <h3 className="text-lg font-semibold text-pampas mb-1">
-                      Run this agent locally
+                      Install (once)
+                    </h3>
+                    <CodeBlock code={`pip install agent-toolbox\nagent-toolbox setup`} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-semibold text-pampas mb-1">
+                      Run this agent locally (macOS/Linux)
                     </h3>
                     <CodeBlock code={localRunCommand} onCopy={handleCopyCommand} />
                     <p className="text-sm text-pampas/60">
                       Starts the gateway for this preset on{" "}
                       <code className="font-mono text-pampas/85">http://localhost:4280</code>.
                     </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold text-pampas/90">
+                      Windows PowerShell
+                    </h4>
+                    <CodeBlock code={windowsRunCommand} />
                   </div>
 
                   <div className="space-y-2">
@@ -303,7 +336,7 @@ export function AgentDetailModal({
                     Example Input
                   </h3>
                   <CodeBlock
-                    code={JSON.stringify({} as Record<string, any>, null, 2)}
+                    code={JSON.stringify(exampleInput || {}, null, 2)}
                   />
                 </div>
                 <div>
@@ -311,12 +344,10 @@ export function AgentDetailModal({
                     Example Output
                   </h3>
                   <CodeBlock
-                    code={JSON.stringify({} as Record<string, any>, null, 2)}
+                    code={JSON.stringify(exampleOutput || {}, null, 2)}
                   />
                 </div>
-              </TabsContent>
-
-              <TabsContent value="schema" className="space-y-4">
+                <Separator />
                 <div>
                   <h3 className="text-lg font-semibold text-pampas mb-2">
                     Input Schema

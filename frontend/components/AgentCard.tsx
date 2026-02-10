@@ -36,7 +36,7 @@ const primitiveGlow: Record<string, { border: string; glow: string }> = {
 }
 
 export function AgentCard({ agent, onClick, onCopy }: AgentCardProps) {
-  const installCommand = `AGENT_PRESET=${agent.id} make run`
+  const installCommand = `AGENT_PRESET=${agent.id} agent-toolbox`
   const copyInstall = async (e: React.MouseEvent) => {
     e.stopPropagation()
     await navigator.clipboard.writeText(installCommand)

@@ -6,35 +6,61 @@ Run a **preset-based AI agent gateway** and call it immediately via a stable HTT
 
 All examples use **port 4280**.
 
-```bash
-pip install -e .
+Install the package:
 
-# Run a specific agent preset (presets are bundled in the package)
+```bash
+pip install agent-toolbox
+```
+
+One-time setup (creates a local `.venv` and installs Python deps):
+
+```bash
+agent-toolbox setup
+```
+
+Run a specific agent preset (presets are bundled in the package):
+
+macOS/Linux (bash/zsh):
+
+```bash
+source .venv/bin/activate
 AGENT_PRESET=summarizer agent-toolbox
 ```
 
-Or with host/port:
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\activate
+$env:AGENT_PRESET="summarizer"
+agent-toolbox
+```
+
+WSL (Ubuntu bash):
 
 ```bash
-AGENT_PRESET=classifier PORT=4280 agent-toolbox
+source .venv/bin/activate
+AGENT_PRESET=summarizer agent-toolbox
 ```
 
 For other presets, set `AGENT_PRESET` to `meeting_notes`, `extractor`, `classifier`, or `triage`.
 
-## Quickstart (Make, from repo)
+Open Swagger UI at `http://localhost:4280/docs`.
 
-All examples use **port 4280**.
+---
+
+## Quickstart (repo/dev)
+
+If you're contributing or running from source:
 
 ```bash
 git clone <REPO_URL>
 cd agent-toolbox
-make install
-
-# Run a specific agent preset locally
-AGENT_PRESET=summarizer make run
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+AGENT_PRESET=summarizer uvicorn app.main:app --host 0.0.0.0 --port 4280
 ```
-
-For other presets, change the `AGENT_PRESET` value (for example `meeting_notes`, `extractor`, `classifier`, `triage`).
 
 ### Docker (alternative)
 
@@ -48,31 +74,15 @@ To stop containers:
 make docker-down
 ```
 
----
+### Docker (no repo)
 
-## Quickstart (local, manual)
-
-All examples use **port 4280**.
+Once the GHCR image is published, you can run without cloning:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 4280
+docker run --rm -p 4280:4280 -e AGENT_PRESET=summarizer ghcr.io/sharathb5/agent-toolbox:main
 ```
 
-Open Swagger UI at `http://localhost:4280/docs`.
-
-### Switch agent preset
-
-Presets are bundled in the package under `app/presets/*.yaml`. Select one via `AGENT_PRESET`:
-
-```bash
-AGENT_PRESET=classifier PROVIDER=stub uvicorn app.main:app --host 0.0.0.0 --port 4280
-```
-
-## Quickstart (Docker Compose)
+### Docker Compose
 
 ```bash
 docker compose up --build
@@ -84,15 +94,16 @@ To switch presets:
 AGENT_PRESET=triage docker compose up --build
 ```
 
-## API surface (stable across presets)
+## API + Schema (stable across presets)
 
 - `GET /` – service metadata
 - `GET /health` – health info
 - `GET /schema` – active preset schemas (no provider calls)
+- `GET /examples` – plug-and-play input/output example for active preset
 - `POST /invoke` – core invocation
 - `POST /stream` – **501 Not Implemented** in v1
 
-## curl examples
+## Examples (plug-and-play)
 
 All examples assume the server is running at `http://localhost:4280`.
 
@@ -102,34 +113,37 @@ All examples assume the server is running at `http://localhost:4280`.
 curl http://localhost:4280/health
 ```
 
-### Schema
+### Schema + examples
 
 ```bash
 curl http://localhost:4280/schema
+curl http://localhost:4280/examples
 ```
 
-### Invoke: summarizer
+For a specific preset:
+
+```bash
+curl http://localhost:4280/agents/summarizer/examples
+```
+
+Example response (trimmed):
+
+```json
+{
+  "agent": "summarizer",
+  "example": {
+    "input": {"text": "OpenAI released a new model that improves reasoning and tool use."},
+    "output": {"summary": "A new OpenAI model improves reasoning and tool use.", "bullets": ["Improved reasoning", "Better tool use"]}
+  }
+}
+```
+
+### Invoke using the example input
 
 ```bash
 curl -X POST http://localhost:4280/invoke \
   -H "Content-Type: application/json" \
-  -d '{"input": {"text": "Some long text to summarize."}}'
-```
-
-### Invoke: classifier
-
-```bash
-curl -X POST http://localhost:4280/invoke \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": {
-      "items": [
-        {"id": "1", "content": "Reset my password"},
-        {"id": "2", "content": "Pricing question"}
-      ],
-      "categories": ["support", "sales", "other"]
-    }
-  }'
+  -d '{"input": {"text": "OpenAI released a new model that improves reasoning and tool use."}}'
 ```
 
 ### Auth example (Clerk)
