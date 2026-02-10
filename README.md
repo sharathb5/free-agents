@@ -1,5 +1,7 @@
 ## Standardized Agent Runtime (MVP)
 
+![GHCR](https://img.shields.io/badge/ghcr-sharathb5%2Fagent--toolbox-blue)
+
 Run a **preset-based AI agent gateway** and call it immediately via a stable HTTP contract. The north-star workflow is: run the service locally/VM → call `POST /invoke` with JSON → get consistent JSON back (with discoverable docs at `GET /schema` and Swagger at `/docs`).
 
 ## Quickstart (pip)
@@ -79,7 +81,7 @@ make docker-down
 Once the GHCR image is published, you can run without cloning:
 
 ```bash
-docker run --rm -p 4280:4280 -e AGENT_PRESET=summarizer ghcr.io/sharathb5/agent-toolbox:main
+docker run --rm -p 4280:4280 -e AGENT_PRESET=summarizer ghcr.io/sharathb5/agent-toolbox:latest
 ```
 
 ### Docker Compose

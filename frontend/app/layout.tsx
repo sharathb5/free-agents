@@ -28,7 +28,27 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.variable} ${fraunces.variable} font-ui antialiased`}>
-        <ClerkProvider>{children}</ClerkProvider>
+        <ClerkProvider>
+          {children}
+          <div className="fixed bottom-3 right-4 text-xs text-pampas/50 flex items-center gap-3">
+            <a
+              href="https://github.com/sharathb5"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-pampas/80 transition-colors"
+            >
+              GitHub
+            </a>
+            <a
+              href="https://x.com/_sharathb"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-pampas/80 transition-colors"
+            >
+              X
+            </a>
+          </div>
+        </ClerkProvider>
       </body>
     </html>
   )
