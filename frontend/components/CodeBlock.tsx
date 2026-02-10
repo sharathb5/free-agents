@@ -35,15 +35,9 @@ export function CodeBlock({ code, language, className, onCopy }: CodeBlockProps)
         aria-label="Copy code"
       >
         {copied ? (
-          <>
-            <Check className="h-4 w-4 text-olive-green" />
-            <span>Copied</span>
-          </>
+          <Check className="h-4 w-4 text-olive-green" />
         ) : (
-          <>
-            <Copy className="h-4 w-4 text-pampas/80" />
-            <span>Copy</span>
-          </>
+          <Copy className="h-4 w-4 text-pampas/80" />
         )}
       </Button>
     </div>
