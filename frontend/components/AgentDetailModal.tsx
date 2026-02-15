@@ -264,7 +264,7 @@ export function AgentDetailModal({
 
               <TabsContent value="install" className="space-y-6">
                 <p className="text-sm text-pampas/75">
-                  Install via pip and run the preset locally. For real LLM output, set up OpenRouter (API key in{" "}
+                  Install via pipx and run the preset locally. For real LLM output, set up OpenRouter (API key in{" "}
                   <code className="font-mono text-pampas/85">.env</code>) — see Get set up on the home page.
                 </p>
 
@@ -273,7 +273,12 @@ export function AgentDetailModal({
                     <h3 className="text-lg font-semibold text-pampas mb-1">
                       Install (once)
                     </h3>
-                    <CodeBlock code={`pip install agent-toolbox\nagent-toolbox setup`} />
+                    <CodeBlock
+                      code={`pipx install agent-toolbox\nagent-toolbox setup`}
+                    />
+                    <p className="text-sm text-pampas/60">
+                      If this fails, use the troubleshooting guide for OS-specific setup.
+                    </p>
                   </div>
 
                   <div className="space-y-2">
@@ -321,6 +326,16 @@ export function AgentDetailModal({
                         code={`curl -X POST ${GATEWAY_URL}/sessions/<id>/events \\\n  -H "Content-Type: application/json" \\\n  -d '{\"events\": [{\"role\": \"user\", \"content\": \"Remember this note\"}]}'`}
                       />
                     </div>
+                    <p className="text-xs text-pampas/65 mt-2">
+                      Having issues?{" "}
+                      <Link
+                        href="/troubleshooting"
+                        className="text-rock-blue underline hover:text-pampas"
+                      >
+                        Open troubleshooting
+                      </Link>
+                      .
+                    </p>
                   </div>
                 </div>
               </TabsContent>

@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-toolbox"
-version = "0.1.0"
+version = "0.1.1"
 description = "Standardized Agent Runtime — preset-based AI agent gateway with stable HTTP API"
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [{ name = "Agent Toolbox" }]
 keywords = ["agent", "llm", "gateway", "fastapi", "preset"]
 classifiers = [
@@ -16,6 +16,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",

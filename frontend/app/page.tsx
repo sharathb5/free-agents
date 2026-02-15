@@ -42,14 +42,10 @@ export default function MarketplacePage() {
   const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4280"
   const AGENTS_CACHE_KEY = "agent-catalog:agents:latest"
 
-  const REPO_CLONE_COMMAND = "pip install agent-toolbox"
+  const REPO_CLONE_COMMAND = "pipx install agent-toolbox"
+  const PIPX_SETUP_COMMAND = "python3 -m pip install --user pipx\npython3 -m pipx ensurepath"
   const PROJECT_SETUP_COMMAND = "agent-toolbox setup"
-  const LOCAL_RUN_EXAMPLE =
-    "AGENT_PRESET=summarizer nohup agent-toolbox > agent-toolbox.log 2>&1 &"
-  const WINDOWS_RUN_EXAMPLE =
-    "$env:AGENT_PRESET=\"summarizer\"\nStart-Process -NoNewWindow agent-toolbox -RedirectStandardOutput agent-toolbox.log -RedirectStandardError agent-toolbox.err"
-  const DOCKER_RUN_EXAMPLE =
-    "docker run -d --name agent-toolbox -p 4280:4280 -e AGENT_PRESET=summarizer ghcr.io/sharathb5/agent-toolbox:latest"
+  const LOCAL_RUN_EXAMPLE = "AGENT_PRESET=summarizer agent-toolbox"
 
   React.useEffect(() => {
     if (showMine) return
@@ -255,7 +251,7 @@ export default function MarketplacePage() {
                 Run AI agents locally in one command.
               </h1>
               <p className="mt-4 text-base md:text-lg text-pampas/70">
-                Install via pip → set up once → pick a preset → call{" "}
+                Install via pipx (or venv) → set up once → pick a preset → call{" "}
                 <span className="font-mono text-pampas/85">/invoke</span>.
               </p>
             </div>
@@ -411,20 +407,25 @@ export default function MarketplacePage() {
 
           <div className="mt-4 space-y-4 text-sm text-pampas/85">
             <div>
-              <p className="font-semibold">Step 1 – Install via pip</p>
+              <p className="font-semibold">Step 1 – Install CLI (pipx recommended)</p>
               <div className="mt-1">
                 <CodeBlock code={REPO_CLONE_COMMAND} />
+              </div>
+              <p className="mt-1 text-xs text-pampas/60">
+                Requires <code className="font-mono text-pampas/85">Python 3.10+</code>. If pipx is not installed yet, run:
+              </p>
+              <div className="mt-1">
+                <CodeBlock code={PIPX_SETUP_COMMAND} />
               </div>
             </div>
 
             <div>
-              <p className="font-semibold">Step 2 – Install dependencies (once)</p>
+              <p className="font-semibold">Step 2 – Print setup guidance</p>
               <div className="mt-1">
                 <CodeBlock code={PROJECT_SETUP_COMMAND} />
               </div>
               <p className="mt-1 text-xs text-pampas/60">
-                Creates a <code className="font-mono text-pampas/85">.venv</code> and installs Python
-                requirements.
+                Shows environment variable and API key instructions.
               </p>
             </div>
 
@@ -462,19 +463,27 @@ export default function MarketplacePage() {
               </p>
               <div className="mt-1 space-y-2">
                 <CodeBlock code={LOCAL_RUN_EXAMPLE} />
-                <CodeBlock code={WINDOWS_RUN_EXAMPLE} />
-                <CodeBlock code={DOCKER_RUN_EXAMPLE} />
               </div>
               <p className="mt-1 text-xs text-pampas/60">
-                Both start the gateway on{" "}
+                This starts the gateway on{" "}
                 <code className="font-mono text-pampas/85">http://localhost:4280</code>. Use{" "}
-                <code className="font-mono text-pampas/85">make docker-down</code> to stop Docker.
+                <code className="font-mono text-pampas/85">Ctrl+C</code> to stop.
               </p>
               <p className="mt-2 text-xs text-pampas/60">
                 Session memory is available via CLI calls (
                 <code className="font-mono text-pampas/85">POST /sessions</code> and{" "}
                 <code className="font-mono text-pampas/85">POST /sessions/&lt;id&gt;/events</code>)
                 when you need it.
+              </p>
+              <p className="mt-2 text-xs text-pampas/65">
+                Having issues?{" "}
+                <Link
+                  href="/troubleshooting"
+                  className="text-rock-blue underline hover:text-pampas"
+                >
+                  Open troubleshooting
+                </Link>
+                .
               </p>
             </div>
           </div>

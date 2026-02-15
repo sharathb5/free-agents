@@ -4,20 +4,66 @@
 
 Run a **preset-based AI agent gateway** and call it immediately via a stable HTTP contract. The north-star workflow is: run the service locally/VM → call `POST /invoke` with JSON → get consistent JSON back (with discoverable docs at `GET /schema` and Swagger at `/docs`).
 
-## Quickstart (pip)
+## Quickstart (pipx recommended)
 
 All examples use **port 4280**.
 
-Install the package:
+`agent-toolbox` requires **Python 3.10+**.
+
+Install with pipx (recommended for CLI apps):
 
 ```bash
-pip install agent-toolbox
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+pipx install agent-toolbox
 ```
 
-One-time setup (creates a local `.venv` and installs Python deps):
+If you prefer a project-local environment, use bootstrap (creates `.venv`, upgrades pip, installs package):
+
+```bash
+./scripts/bootstrap.sh
+```
+
+Or run manually with venv:
+
+```bash
+python3.10 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install agent-toolbox
+```
+
+One-time setup helper (prints provider/env guidance):
 
 ```bash
 agent-toolbox setup
+```
+
+### Homebrew Python note (macOS)
+
+If global `pip install ...` fails (PEP 668 / externally-managed environment), use a venv with an explicit interpreter:
+
+```bash
+brew install python@3.10
+/opt/homebrew/bin/python3.10 -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install agent-toolbox
+```
+
+If you prefer Homebrew for pipx on macOS:
+
+```bash
+brew install pipx
+pipx ensurepath
+pipx install agent-toolbox
+```
+
+If `agent-toolbox` command is not found after install, run:
+
+```bash
+python -m pip show agent-toolbox
+agent-toolbox doctor
 ```
 
 Run a specific agent preset (presets are bundled in the package):
