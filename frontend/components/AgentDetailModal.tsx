@@ -49,13 +49,13 @@ export function AgentDetailModal({
   const [detail, setDetail] = React.useState<AgentDetail | null>(null)
   const [detailError, setDetailError] = React.useState<string | null>(null)
   const [detailLoading, setDetailLoading] = React.useState(false)
+  const [installOs, setInstallOs] = React.useState<"mac_linux" | "windows">("mac_linux")
   const [archiveStatus, setArchiveStatus] = React.useState<"idle" | "loading" | "ok" | "error">("idle")
   const [archiveMessage, setArchiveMessage] = React.useState("")
   const localRunCommand = agent
-    ? `source .venv/bin/activate\nAGENT_PRESET=${agent.id} nohup agent-toolbox > agent-toolbox.log 2>&1 &`
-    : ""
-  const windowsRunCommand = agent
-    ? `.\.venv\\Scripts\\activate\n$env:AGENT_PRESET="${agent.id}"\nStart-Process -NoNewWindow agent-toolbox -RedirectStandardOutput agent-toolbox.log -RedirectStandardError agent-toolbox.err`
+    ? installOs === "windows"
+      ? `$env:AGENT_PRESET=\"${agent.id}\"\nagent-toolbox`
+      : `AGENT_PRESET=${agent.id} agent-toolbox`
     : ""
   const dockerRunCommand = agent
     ? `docker run -d --name agent-toolbox -p 4280:4280 -e AGENT_PRESET=${agent.id} ghcr.io/sharathb5/agent-toolbox:latest`
@@ -269,6 +269,34 @@ export function AgentDetailModal({
                 </p>
 
                 <div className="space-y-4">
+                  <div>
+                    <h3 className="text-lg font-semibold text-pampas mb-2">Choose your OS</h3>
+                    <div className="inline-flex rounded-lg border border-rock-blue/30 bg-pampas/5 p-1">
+                      <button
+                        type="button"
+                        onClick={() => setInstallOs("mac_linux")}
+                        className={`rounded-md px-3 py-1.5 text-xs ${
+                          installOs === "mac_linux"
+                            ? "bg-rock-blue/25 text-pampas"
+                            : "text-pampas/70 hover:text-pampas"
+                        }`}
+                      >
+                        macOS/Linux
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInstallOs("windows")}
+                        className={`rounded-md px-3 py-1.5 text-xs ${
+                          installOs === "windows"
+                            ? "bg-rock-blue/25 text-pampas"
+                            : "text-pampas/70 hover:text-pampas"
+                        }`}
+                      >
+                        Windows
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     <h3 className="text-lg font-semibold text-pampas mb-1">
                       Install (once)
@@ -283,20 +311,13 @@ export function AgentDetailModal({
 
                   <div className="space-y-2">
                     <h3 className="text-lg font-semibold text-pampas mb-1">
-                      Run this agent locally (macOS/Linux)
+                      Run this agent locally ({installOs === "windows" ? "Windows" : "macOS/Linux"})
                     </h3>
                     <CodeBlock code={localRunCommand} onCopy={handleCopyCommand} />
                     <p className="text-sm text-pampas/60">
                       Starts the gateway for this preset on{" "}
                       <code className="font-mono text-pampas/85">http://localhost:4280</code>.
                     </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-semibold text-pampas/90">
-                      Windows PowerShell
-                    </h4>
-                    <CodeBlock code={windowsRunCommand} />
                   </div>
 
                   <div className="space-y-2">

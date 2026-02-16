@@ -27,6 +27,7 @@ export default function MarketplacePage() {
   const [selectedAgent, setSelectedAgent] = React.useState<AgentSummary | null>(null)
   const [isModalOpen, setIsModalOpen] = React.useState(false)
   const [isSetupOpen, setIsSetupOpen] = React.useState(false)
+  const [setupOs, setSetupOs] = React.useState<"mac_linux" | "windows">("mac_linux")
   const [toastMessage, setToastMessage] = React.useState("")
   const [showToast, setShowToast] = React.useState(false)
   const [agents, setAgents] = React.useState<AgentSummary[]>([])
@@ -43,9 +44,15 @@ export default function MarketplacePage() {
   const AGENTS_CACHE_KEY = "agent-catalog:agents:latest"
 
   const REPO_CLONE_COMMAND = "pipx install agent-toolbox"
-  const PIPX_SETUP_COMMAND = "python3 -m pip install --user pipx\npython3 -m pipx ensurepath"
+  const PIPX_SETUP_COMMAND =
+    setupOs === "windows"
+      ? "py -m pip install --user pipx\npy -m pipx ensurepath"
+      : "python3 -m pip install --user pipx\npython3 -m pipx ensurepath"
   const PROJECT_SETUP_COMMAND = "agent-toolbox setup"
-  const LOCAL_RUN_EXAMPLE = "AGENT_PRESET=summarizer agent-toolbox"
+  const LOCAL_RUN_EXAMPLE =
+    setupOs === "windows"
+      ? "$env:AGENT_PRESET=\"summarizer\"\nagent-toolbox"
+      : "AGENT_PRESET=summarizer agent-toolbox"
 
   React.useEffect(() => {
     if (showMine) return
@@ -407,6 +414,34 @@ export default function MarketplacePage() {
 
           <div className="mt-4 space-y-4 text-sm text-pampas/85">
             <div>
+              <p className="font-semibold">Choose your OS</p>
+              <div className="mt-2 inline-flex rounded-lg border border-rock-blue/30 bg-pampas/5 p-1">
+                <button
+                  type="button"
+                  onClick={() => setSetupOs("mac_linux")}
+                  className={`rounded-md px-3 py-1.5 text-xs ${
+                    setupOs === "mac_linux"
+                      ? "bg-rock-blue/25 text-pampas"
+                      : "text-pampas/70 hover:text-pampas"
+                  }`}
+                >
+                  macOS/Linux
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSetupOs("windows")}
+                  className={`rounded-md px-3 py-1.5 text-xs ${
+                    setupOs === "windows"
+                      ? "bg-rock-blue/25 text-pampas"
+                      : "text-pampas/70 hover:text-pampas"
+                  }`}
+                >
+                  Windows
+                </button>
+              </div>
+            </div>
+
+            <div>
               <p className="font-semibold">Step 1 – Install CLI (pipx recommended)</p>
               <div className="mt-1">
                 <CodeBlock code={REPO_CLONE_COMMAND} />
@@ -467,7 +502,8 @@ export default function MarketplacePage() {
               <p className="mt-1 text-xs text-pampas/60">
                 This starts the gateway on{" "}
                 <code className="font-mono text-pampas/85">http://localhost:4280</code>. Use{" "}
-                <code className="font-mono text-pampas/85">Ctrl+C</code> to stop.
+                <code className="font-mono text-pampas/85">Ctrl+C</code>{" "}
+                to stop.
               </p>
               <p className="mt-2 text-xs text-pampas/60">
                 Session memory is available via CLI calls (
