@@ -35,6 +35,9 @@ python3 -m pipx ensurepath`}
 {`py -m pip install --user pipx
 py -m pipx ensurepath`}
           </pre>
+          <p className="text-sm text-pampas/75">
+            After running <code>ensurepath</code>, close and reopen your terminal before using <code>pipx</code>.
+          </p>
         </section>
 
         <section className="mt-5 space-y-3 rounded-2xl border border-rock-blue/25 bg-pampas/5 p-5">

@@ -452,6 +452,9 @@ export default function MarketplacePage() {
               <div className="mt-1">
                 <CodeBlock code={PIPX_SETUP_COMMAND} />
               </div>
+              <p className="mt-1 text-xs text-pampas/60">
+                After running <code className="font-mono text-pampas/85">ensurepath</code>, open a new terminal before running pipx commands.
+              </p>
             </div>
 
             <div>
