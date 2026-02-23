@@ -115,9 +115,18 @@ def _run_bootstrap(venv_dir: str = ".venv") -> None:
     print("Then run: agent-toolbox setup")
 
 
+def _print_env_path_hint() -> None:
+    """Print where .env is loaded from and whether the file exists (for setup/diagnosis)."""
+    env_path = Path.cwd() / ".env"
+    status = "found" if env_path.exists() else "not found"
+    print(".env path: {} ({})".format(env_path.resolve(), status))
+    print()
+
+
 def _print_doctor() -> None:
     print("Agent Toolbox Doctor")
     print()
+    _print_env_path_hint()
     print(f"Platform: {platform.platform()}")
     print(f"Python:   {_python_version_str()}")
     print(f"Exe:      {sys.executable}")
@@ -174,6 +183,7 @@ def main() -> None:
             _print_help()
             sys.exit(0)
         if subcommand == "setup":
+            _print_env_path_hint()
             _print_setup_banner(
                 preset=settings.agent_preset,
                 provider=settings.provider_name,

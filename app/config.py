@@ -1,12 +1,15 @@
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-# Load .env from current directory so PROVIDER and API keys are set automatically.
-load_dotenv()
+# Load .env from the directory you run agent-toolbox from. override=True so that
+# .env wins over any PROVIDER/API keys already set in the shell (e.g. in .zshrc).
+_load_env_path = Path.cwd() / ".env"
+load_dotenv(dotenv_path=_load_env_path, override=True)
 
 
 class Settings(BaseModel):

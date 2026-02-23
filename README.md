@@ -280,6 +280,8 @@ Set **`CORS_ORIGINS`** so the frontend can call the gateway (e.g. Session tab). 
 
 ## Configuration (environment variables)
 
+Put a `.env` file in the **directory you run `agent-toolbox` from**. Values in that file override any same-named variables already set in your shell (e.g. in `.zshrc` or `.bash_profile`), so the project folder’s `.env` always wins when present. Run `agent-toolbox setup` to see the path used and whether `.env` was found.
+
 - **`AGENT_PRESET`**: which preset to load (default: `summarizer`). Presets are YAML files bundled in the package (`app/presets`).
 - **`PROVIDER`**: provider implementation (default: `stub`). Use `openrouter` for one API key and many models (recommended).
 - **`AUTH_TOKEN`**: optional legacy bearer auth for dev/tests (`Authorization: Bearer <token>`).
