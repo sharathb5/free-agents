@@ -1,0 +1,45 @@
+# Tool bundles (Part 5). Each bundle has category, tools, optional execution_limits and policy_overrides.
+bundles:
+  - bundle_id: research_basic
+    title: Research Basic
+    description: "Web fetching for research tasks"
+    category: research
+    tools:
+      - http_request
+    execution_limits:
+      max_tool_calls: 3
+    policy_overrides:
+      http_request: {}
+
+  - bundle_id: no_tools_writer
+    title: Writer (No Tools)
+    description: "Pure generation; no tool access"
+    category: writing
+    tools: []
+
+  - bundle_id: github_reader
+    title: GitHub Reader
+    description: "Read GitHub repos (OAuth)"
+    category: development
+    tools:
+      - github_repo_read
+    execution_limits:
+      max_tool_calls: 5
+    policy_overrides: {}
+
+  - bundle_id: repo_to_agent
+    title: Repo to Agent
+    description: "Analyze a GitHub repo and propose an agent design"
+    category: development
+    tools:
+      - github_repo_read
+    execution_limits:
+      max_tool_calls: 8
+    policy_overrides: {}
+
+  - bundle_id: data_analysis
+    title: Data Analysis
+    description: "Analyze data (stub for future tools)"
+    category: data
+    tools: []
+    policy_overrides: {}

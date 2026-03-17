@@ -1,0 +1,20 @@
+# First-party tool catalog (Part 5). Categories and metadata for UI and resolution.
+tools:
+  - tool_id: http_request
+    category: "Web & Research"
+    description: "Make an HTTP request to allowlisted domains"
+    safety_level: network-read
+    input_schema_ref: built-in
+    default_policy:
+      http_timeout_seconds: 15
+      http_max_response_chars: 50000
+
+  - tool_id: github_repo_read
+    category: "GitHub"
+    description: "Read-only inspection of GitHub repositories (overview, tree, file, sample)"
+    safety_level: oauth-read
+    input_schema_ref: built-in
+    default_policy:
+      max_entries: 50
+      max_file_chars: 12000
+      max_sample_files: 5
