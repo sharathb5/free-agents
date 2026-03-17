@@ -53,8 +53,9 @@ async def post_sessions(request: Request) -> JSONResponse:
 @router.post("/{session_id}/events")
 async def post_sessions_events(session_id: str, request: Request) -> JSONResponse:
     """
-    Append events to a session. Body: { "events": [ { "role", "content" }, ... ] }.
-    Returns 200 with { ok: true, session_id, appended: N }. 400 if body invalid; 404 if session not found.
+    Append events to a session.
+    Body: { "events": [ { "role", "content" }, ... ], "idempotency_key"?: "..." }.
+    Returns 200 with { ok: true, session_id, appended: N, duplicated: bool }. 400 if body invalid; 404 if session not found.
     """
     try:
         body = await request.json()
@@ -70,22 +71,67 @@ async def post_sessions_events(session_id: str, request: Request) -> JSONRespons
     events = body["events"]
     if not isinstance(events, list):
         return _session_error(400, "MALFORMED_REQUEST", "'events' must be an array")
+    body_idempotency_key = body.get("idempotency_key")
+    if body_idempotency_key is not None and not isinstance(body_idempotency_key, str):
+        return _session_error(400, "MALFORMED_REQUEST", "'idempotency_key' must be a string")
+
+    if isinstance(body_idempotency_key, str):
+        enriched_events: List[Dict[str, Any]] = []
+        for i, ev in enumerate(events):
+            if not isinstance(ev, dict):
+                enriched_events.append(ev)
+                continue
+            merged = dict(ev)
+            if "idempotency_key" not in merged:
+                merged["idempotency_key"] = (
+                    body_idempotency_key if len(events) == 1 else f"{body_idempotency_key}:{i}"
+                )
+            enriched_events.append(merged)
+        events = enriched_events
     session = session_store.get_session(session_id)
     if session is None:
         return _session_error(404, "NOT_FOUND", f"Session not found: {session_id}")
-    appended = session_store.append_events(session_id, events)
+    result = session_store.append_events_detailed(session_id, events)
     return JSONResponse(
         status_code=200,
-        content={"ok": True, "session_id": session_id, "appended": appended},
+        content={
+            "ok": True,
+            "session_id": session_id,
+            "appended": int(result.get("appended", 0)),
+            "duplicated": bool(result.get("duplicated", False)),
+            "event_ids": result.get("event_ids", []),
+        },
     )
 
 
 @router.get("/{session_id}")
 async def get_sessions_id(session_id: str) -> JSONResponse:
     """
-    Get session by id. Returns 200 with { session_id, agent_id, created_at, events, running_summary } or 404.
+    Get session by id. Returns 200 with
+    { session_id, agent_id, created_at, events, running_summary, summary_updated_at, summary_message_count }
+    or 404.
     """
     session = session_store.get_session(session_id)
     if session is None:
         return _session_error(404, "NOT_FOUND", f"Session not found: {session_id}")
     return JSONResponse(status_code=200, content=session)
+
+
+@router.get("/{session_id}/summary")
+async def get_sessions_summary(session_id: str) -> JSONResponse:
+    """
+    Get only the running_summary for a session.
+    Returns 200 with { session_id, running_summary, summary_updated_at, summary_message_count } or 404.
+    """
+    session = session_store.get_session(session_id)
+    if session is None:
+        return _session_error(404, "NOT_FOUND", f"Session not found: {session_id}")
+    return JSONResponse(
+        status_code=200,
+        content={
+            "session_id": session["session_id"],
+            "running_summary": session.get("running_summary") or "",
+            "summary_updated_at": session.get("summary_updated_at"),
+            "summary_message_count": session.get("summary_message_count", 0),
+        },
+    )
