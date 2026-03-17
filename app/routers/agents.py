@@ -8,6 +8,7 @@ Uses build_error_envelope and request_id pattern as sessions.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Dict, List, Optional
 
 import json
@@ -21,7 +22,10 @@ from app.examples import get_example
 from app.engine import build_error_envelope, new_request_id, process_invoke_for_preset
 from app.preset_loader import PresetLoadError, get_active_preset
 from app.registry_adapter import spec_to_preset
+from app.runtime.runner import run_runner
+from app.runtime.tools.registry import DefaultToolRegistry
 from app.storage import registry_store
+from app.storage import run_store
 
 logger = logging.getLogger("agent-gateway")
 
@@ -285,6 +289,18 @@ async def get_agents_id(agent_id: str, version: Optional[str] = None) -> JSONRes
         "credits": spec.get("credits"),
         "created_at": spec.get("created_at"),
     }
+    if spec.get("allowed_tools") is not None:
+        body["allowed_tools"] = spec["allowed_tools"]
+    if spec.get("http_allowed_domains") is not None:
+        body["http_allowed_domains"] = spec["http_allowed_domains"]
+    if spec.get("bundle_id") is not None:
+        body["bundle_id"] = spec["bundle_id"]
+    if spec.get("additional_tools") is not None:
+        body["additional_tools"] = spec["additional_tools"]
+    if spec.get("tool_policies") is not None:
+        body["tool_policies"] = spec["tool_policies"]
+    if spec.get("resolved_execution_limits") is not None:
+        body["resolved_execution_limits"] = spec["resolved_execution_limits"]
     return JSONResponse(status_code=200, content=body)
 
 
@@ -308,6 +324,98 @@ async def get_agents_examples(agent_id: str) -> JSONResponse:
     if example is None:
         return _agents_error(404, "EXAMPLE_NOT_FOUND", f"No example found for agent: {agent_id}")
     return JSONResponse(status_code=200, content={"agent": agent_id, "example": example})
+
+
+@router.post("/{agent_id}/runs")
+async def create_agent_run(
+    agent_id: str,
+    request: Request,
+    provider=Depends(get_provider),
+) -> JSONResponse:
+    """
+    Create and optionally run an agent (runtime). Body: input, session_id?, agent_version?, wait? (default true).
+    If wait=true, run synchronously and return run_id, status, output, meta. If wait=false, return run_id and status queued.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return _agents_error(400, "MALFORMED_REQUEST", "Request body must be valid JSON")
+    if not isinstance(body, dict) or "input" not in body:
+        return _agents_error(422, "INPUT_VALIDATION_ERROR", "Request body must have 'input'", details=[{"path": [], "message": "Missing 'input' field"}])
+    input_payload = body["input"]
+    session_id = body.get("session_id") if isinstance(body.get("session_id"), str) else None
+    agent_version = body.get("agent_version") if isinstance(body.get("agent_version"), str) else None
+    wait = body.get("wait", True)
+    if isinstance(wait, str):
+        wait = wait.strip().lower() in ("true", "1", "yes")
+    elif not isinstance(wait, bool):
+        wait = True
+
+    spec = registry_store.get_agent(agent_id, version=agent_version)
+    if spec is None:
+        return _agents_error(404, "AGENT_NOT_FOUND", f"Agent not found: {agent_id}")
+
+    preset = spec_to_preset(spec)
+    resolved_version = spec.get("version", "latest")
+    run = run_store.create_run(agent_id, resolved_version, session_id, input_payload)
+    run_id = run["id"]
+    request_id = new_request_id()
+
+    tools_enabled = get_settings().tools_enabled
+    tool_registry = DefaultToolRegistry() if tools_enabled else None
+    limits = getattr(preset, "resolved_execution_limits", None) or {}
+
+    if wait:
+        run_runner(
+            preset=preset,
+            provider=provider,
+            input_payload=input_payload,
+            run_id=run_id,
+            session_id=session_id,
+            request_id=request_id,
+            tool_registry=tool_registry,
+            max_steps=limits.get("max_steps"),
+            max_wall_time_seconds=limits.get("max_wall_time_seconds"),
+        )
+        run = run_store.get_run(run_id)
+        if run is None:
+            return _agents_error(500, "INTERNAL_ERROR", "Run not found after execution")
+        meta: Dict[str, Any] = {"step_count": run.get("step_count", 0)}
+        if session_id is not None:
+            meta["session_id"] = session_id
+        steps = run_store.list_run_steps(run_id)
+        tool_calls_used = sum(1 for s in steps if s.get("step_type") == "tool_call")
+        meta["tool_calls_used"] = tool_calls_used
+        meta["max_tool_calls"] = (
+            limits.get("max_tool_calls") if limits.get("max_tool_calls") is not None else get_settings().max_tool_calls
+        )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "run_id": run_id,
+                "status": run["status"],
+                "output": run.get("output_json"),
+                "error": run.get("error"),
+                "meta": meta,
+            },
+        )
+
+    def run_in_background() -> None:
+        run_runner(
+            preset=preset,
+            provider=provider,
+            input_payload=input_payload,
+            run_id=run_id,
+            session_id=session_id,
+            request_id=request_id,
+            tool_registry=tool_registry,
+            max_steps=limits.get("max_steps"),
+            max_wall_time_seconds=limits.get("max_wall_time_seconds"),
+        )
+
+    thread = threading.Thread(target=run_in_background)
+    thread.start()
+    return JSONResponse(status_code=200, content={"run_id": run_id, "status": "queued"})
 
 
 @router.post("/{agent_id}/invoke")

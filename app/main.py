@@ -20,8 +20,14 @@ from .engine import (
 from .preset_loader import PRESETS_DIR, PresetLoadError, get_active_preset
 from .examples import get_example
 from .routers import agents as agents_router
+from .routers import catalog as catalog_router
+from .routers import evals as evals_router
+from .routers import repo_to_agent as repo_to_agent_router
+from .routers import runs as runs_router
 from .routers import sessions as sessions_router
+from .storage import eval_store
 from .storage import registry_store
+from .storage import run_store
 from .storage import session_store
 
 
@@ -39,6 +45,8 @@ async def lifespan(app: FastAPI):
     )
     session_store.init_db()
     registry_store.init_registry_db()
+    run_store.init_run_db()
+    eval_store.init_eval_db()
     registry_store.seed_from_presets(PRESETS_DIR)
     yield
 
@@ -56,6 +64,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(agents_router.router)
+app.include_router(catalog_router.router)
+app.include_router(evals_router.router)
+app.include_router(repo_to_agent_router.router)
+app.include_router(runs_router.router)
 app.include_router(sessions_router.router)
 
 rate_limiter = SimpleRateLimiter(

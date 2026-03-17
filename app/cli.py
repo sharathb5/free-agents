@@ -83,7 +83,38 @@ def _print_help() -> None:
     print("  agent-toolbox doctor        Print install/environment diagnostics")
     print("  agent-toolbox bootstrap     Create .venv and install agent-toolbox")
     print("  agent-toolbox bootstrap <venv_dir>")
+    print("  agent-toolbox logs tail [--n N]   Tail last N lines of run log (env FREE_AGENTS_LOG_PATH)")
+    print("  agent-toolbox logs show <run_id>  Show log lines for a run")
     print()
+
+
+def _logs_tail(n: int = 100) -> None:
+    """Print last N lines from FREE_AGENTS_LOG_PATH (default ~/.free_agents/logs.jsonl)."""
+    path = os.environ.get("FREE_AGENTS_LOG_PATH")
+    if not path:
+        path = str(Path.home() / ".free_agents" / "logs.jsonl")
+    if not os.path.isfile(path):
+        print(f"Log file not found: {path}")
+        print("Set FREE_AGENTS_LOG_PATH or run the server with logging enabled to create it.")
+        return
+    with open(path) as f:
+        lines = f.readlines()
+    for line in lines[-n:]:
+        print(line.rstrip())
+
+
+def _logs_show(run_id: str) -> None:
+    """Print log lines for the given run_id."""
+    path = os.environ.get("FREE_AGENTS_LOG_PATH")
+    if not path:
+        path = str(Path.home() / ".free_agents" / "logs.jsonl")
+    if not os.path.isfile(path):
+        print(f"Log file not found: {path}")
+        return
+    with open(path) as f:
+        for line in f:
+            if run_id in line:
+                print(line.rstrip())
 
 
 def _run_bootstrap(venv_dir: str = ".venv") -> None:
@@ -181,6 +212,31 @@ def main() -> None:
         subcommand = sys.argv[1].strip().lower()
         if subcommand in {"-h", "--help", "help"}:
             _print_help()
+            sys.exit(0)
+        if subcommand == "logs":
+            if len(sys.argv) < 3:
+                print("Usage: agent-toolbox logs tail [--n N] | agent-toolbox logs show <run_id>")
+                sys.exit(1)
+            logs_cmd = sys.argv[2].strip().lower()
+            if logs_cmd == "tail":
+                n = 100
+                args = sys.argv[3:]
+                for j, a in enumerate(args):
+                    if a in ("-n", "--n") and j + 1 < len(args):
+                        try:
+                            n = int(args[j + 1])
+                        except ValueError:
+                            pass
+                        break
+                _logs_tail(n)
+            elif logs_cmd == "show":
+                if len(sys.argv) < 4:
+                    print("Usage: agent-toolbox logs show <run_id>")
+                    sys.exit(1)
+                _logs_show(sys.argv[3].strip())
+            else:
+                print("Usage: agent-toolbox logs tail [--n N] | agent-toolbox logs show <run_id>")
+                sys.exit(1)
             sys.exit(0)
         if subcommand == "setup":
             _print_env_path_hint()

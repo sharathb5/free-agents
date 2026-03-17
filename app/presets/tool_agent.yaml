@@ -1,0 +1,29 @@
+# Minimal preset for testing HTTP tool. Allowed domains include example.com and localhost.
+id: tool_agent
+version: "1.0.0"
+name: Tool Agent
+description: Agent that can call http_request (for tests).
+primitive: transform
+input_schema:
+  type: object
+  required:
+    - query
+  properties:
+    query:
+      type: string
+output_schema:
+  type: object
+  required:
+    - result
+  properties:
+    result:
+      type: string
+prompt: |
+  You are a helpful assistant. When needed, use the http_request tool to fetch data.
+  Return final with the result when done.
+allowed_tools:
+  - http_request
+http_allowed_domains:
+  - example.com
+  - localhost
+  - 127.0.0.1

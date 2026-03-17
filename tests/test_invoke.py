@@ -771,6 +771,60 @@ def test_invoke_when_session_store_write_fails_still_200_success_envelope(
     assert "meta" in data
 
 
+def test_invoke_writeback_redacts_secrets_in_stored_memory(client, session_db_path):
+    """
+    Stored memory from invoke write-back should redact token/auth/cookie secrets.
+    """
+    with env_vars(
+        {
+            "AUTH_TOKEN": "",
+            "PROVIDER": "stub",
+            "AGENT_PRESET": "summarizer",
+            "SESSION_DB_PATH": session_db_path,
+        }
+    ):
+        create = client.post("/sessions")
+        if create.status_code != 201:
+            pytest.skip("POST /sessions not implemented")
+        session_id = create.json()["session_id"]
+
+        payload = {
+            "input": {
+                "text": "hello",
+                "token": "topsecret-token",
+                "api_key": "secret-api-key",
+                "headers": {
+                    "Authorization": "Bearer super-secret",
+                    "Cookie": "session=abcd",
+                },
+                "source_url": "https://example.com/path?token=abc123&api_key=qwerty&ok=1",
+            },
+            "context": {"session_id": session_id},
+        }
+        resp = client.post("/invoke", json=payload)
+        assert resp.status_code == 200
+
+        session = client.get(f"/sessions/{session_id}")
+        assert session.status_code == 200
+        events = session.json()["events"]
+        assert len(events) >= 2
+        user_ev = events[-2]
+        user_content = str(user_ev.get("content", ""))
+        user_meta = str(user_ev.get("meta", {}))
+
+        assert "topsecret-token" not in user_content
+        assert "secret-api-key" not in user_content
+        assert "Bearer super-secret" not in user_content
+        assert "session=abcd" not in user_content
+
+        assert "topsecret-token" not in user_meta
+        assert "secret-api-key" not in user_meta
+        assert "Bearer super-secret" not in user_meta
+        assert "session=abcd" not in user_meta
+
+        assert "[REDACTED]" in user_content or "[REDACTED]" in user_meta
+
+
 ### 8) Model 1: Registry invoke (/agents/{id}/invoke) ###########################
 
 
@@ -1039,4 +1093,3 @@ def test_registry_invoke_with_session_memory_behaves_like_preset_invoke(
         assert meta["memory_used_count"] >= 1
         # Prompt sent to provider must include stored event content.
         assert distinctive in cap.captured_prompt
-

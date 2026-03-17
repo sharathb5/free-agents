@@ -2,7 +2,10 @@ SHELL := /bin/bash
 
 AGENT ?= summarizer
 
-.PHONY: venv install run test docker-up docker-down
+.PHONY: bootstrap venv install run test docker-up docker-down
+
+bootstrap:
+	./scripts/bootstrap.sh
 
 venv:
 	python3 -m venv .venv
@@ -21,4 +24,3 @@ docker-up:
 
 docker-down:
 	docker compose down
-

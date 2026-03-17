@@ -18,6 +18,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import yaml
 from jsonschema import Draft7Validator, SchemaError
 
+from app.catalog.resolution import ResolutionError, resolve_spec_tools
+from app.models import StoredAgent
 from app.preset_loader import _coerce_memory_policy
 from app.storage.db import connect, is_postgres, sql
 
@@ -259,6 +261,31 @@ def _normalize_spec(raw_spec: Dict[str, Any]) -> Dict[str, Any]:
         normalized["tags"] = tags_list
     if credits_obj is not None:
         normalized["credits"] = credits_obj
+    # Tool catalog resolution (Part 5): same path as POST /catalog/tools/resolve
+    try:
+        resolved, tools_catalog = resolve_spec_tools(raw_spec)
+    except ResolutionError as e:
+        raise AgentSpecInvalid(str(e)) from e
+    normalized["allowed_tools"] = resolved["resolved_allowed_tools"]
+    normalized["tool_policies"] = resolved["resolved_tool_policies"]
+    normalized["resolved_execution_limits"] = resolved["resolved_execution_limits"]
+    if resolved["resolved_bundle_id"] is not None:
+        normalized["bundle_id"] = resolved["resolved_bundle_id"]
+    raw_additional = raw_spec.get("additional_tools") or raw_spec.get("extra_tools")
+    if isinstance(raw_additional, list):
+        tool_ids = {t["tool_id"] for t in (tools_catalog.get("tools") or []) if isinstance(t, dict) and t.get("tool_id")}
+        additional_normalized = [str(t).strip() for t in raw_additional if t and str(t).strip() in tool_ids]
+        normalized["additional_tools"] = additional_normalized
+    http_allowed_domains = raw_spec.get("http_allowed_domains")
+    if http_allowed_domains is not None and isinstance(http_allowed_domains, list):
+        normalized["http_allowed_domains"] = [str(d).strip() for d in http_allowed_domains if d]
+    # Repo-to-agent provenance (optional)
+    if raw_spec.get("repo_owner") is not None and str(raw_spec["repo_owner"]).strip():
+        normalized["repo_owner"] = str(raw_spec["repo_owner"]).strip()
+    if raw_spec.get("repo_name") is not None and str(raw_spec["repo_name"]).strip():
+        normalized["repo_name"] = str(raw_spec["repo_name"]).strip()
+    if raw_spec.get("eval_cases") is not None and isinstance(raw_spec["eval_cases"], list):
+        normalized["eval_cases"] = list(raw_spec["eval_cases"])
     return normalized
 
 
@@ -591,6 +618,44 @@ def get_agent(agent_id: str, version: Optional[str] = None) -> Optional[Dict[str
     spec["created_at"] = row["created_at"]
     spec["archived"] = bool(row["archived"])
     return spec
+
+
+def spec_to_stored_agent(spec: Dict[str, Any], created_at: float = 0.0) -> StoredAgent:
+    """Build a StoredAgent view from a spec dict and created_at (e.g. from get_agent)."""
+    tools = list(spec.get("allowed_tools") or spec.get("additional_tools") or [])
+    if isinstance(tools, list):
+        tools = [str(t) for t in tools if t]
+    else:
+        tools = []
+    eval_cases = spec.get("eval_cases")
+    if not isinstance(eval_cases, list):
+        eval_cases = []
+    return StoredAgent(
+        agent_id=str(spec.get("id", "")),
+        name=str(spec.get("name", "")),
+        description=str(spec.get("description", "")),
+        bundle_id=spec.get("bundle_id") and str(spec["bundle_id"]).strip() or None,
+        tools=tools,
+        eval_cases=eval_cases,
+        repo_owner=spec.get("repo_owner") and str(spec["repo_owner"]).strip() or None,
+        repo_name=spec.get("repo_name") and str(spec["repo_name"]).strip() or None,
+        created_at=float(created_at),
+    )
+
+
+def get_agent_as_stored(agent_id: str, version: Optional[str] = None) -> Optional[StoredAgent]:
+    """Return the agent as a StoredAgent model, or None if not found."""
+    raw = get_agent(agent_id, version)
+    if raw is None:
+        return None
+    created_at = raw.get("created_at")
+    if created_at is None:
+        created_at = 0.0
+    try:
+        created_at = float(created_at)
+    except (TypeError, ValueError):
+        created_at = 0.0
+    return spec_to_stored_agent(raw, created_at)
 
 
 def get_agent_schema(agent_id: str, version: Optional[str] = None) -> Optional[Dict[str, Any]]:
