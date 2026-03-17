@@ -15,3 +15,6 @@
 
 ## Phase 3: SDK (Post-MVP)
 - Add a small SDK wrapper for `/invoke` (JS + Python).
+
+## Phase 4: Local Runner Sync (Future)
+- Decide on registry sync so local pip runner can discover new agents without reinstalling.
