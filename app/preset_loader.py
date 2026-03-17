@@ -26,6 +26,8 @@ def _coerce_memory_policy(raw: Any) -> MemoryPolicy:
             mode=raw.get("mode", "last_n"),
             max_messages=int(raw.get("max_messages", 10)),
             max_chars=int(raw.get("max_chars", 8000)),
+            memory_include_tool_results=bool(raw.get("memory_include_tool_results", False)),
+            memory_tool_result_mode=str(raw.get("memory_tool_result_mode", "summary")),
         )
     return MemoryPolicy(mode="last_n", max_messages=10, max_chars=8000)
 
@@ -42,6 +44,12 @@ class Preset:
     prompt: str
     supports_memory: bool = False
     memory_policy: Optional[MemoryPolicy] = None
+    # Tool overrides (Agent Runtime Part 2): allowed_tools e.g. ["http_request"], http_allowed_domains for http_request
+    allowed_tools: Optional[List[str]] = None
+    http_allowed_domains: Optional[List[str]] = None
+    # Part 5: resolved tool-specific policies and global execution limits
+    tool_policies: Optional[Dict[str, Dict[str, Any]]] = None
+    resolved_execution_limits: Optional[Dict[str, Any]] = None
 
 
 class PresetLoadError(RuntimeError):
@@ -82,6 +90,14 @@ def load_preset(preset_id: str) -> Preset:
     supports_memory = bool(raw.get("supports_memory", False))
     # Only set memory_policy when present in YAML; else None (for GET /agents/{id} null when omitted).
     memory_policy = _coerce_memory_policy(raw["memory_policy"]) if raw.get("memory_policy") is not None else None
+    allowed_tools = raw.get("allowed_tools")
+    if allowed_tools is not None and not isinstance(allowed_tools, list):
+        allowed_tools = None
+    http_allowed_domains = raw.get("http_allowed_domains")
+    if http_allowed_domains is not None and not isinstance(http_allowed_domains, list):
+        http_allowed_domains = None
+    elif http_allowed_domains is not None:
+        http_allowed_domains = [str(d).strip() for d in http_allowed_domains if d]
 
     try:
         return Preset(
@@ -95,6 +111,8 @@ def load_preset(preset_id: str) -> Preset:
             prompt=str(raw["prompt"]),
             supports_memory=supports_memory,
             memory_policy=memory_policy,
+            allowed_tools=allowed_tools,
+            http_allowed_domains=http_allowed_domains,
         )
     except KeyError as exc:  # pragma: no cover - defensive
         raise PresetLoadError(f"Preset missing required field: {exc.args[0]}") from exc

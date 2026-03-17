@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import logging
+import hashlib
 import time
 import uuid
 from typing import Any, Dict, List, Tuple
+from urllib.parse import urlparse
 
 from fastapi import Request
 from jsonschema import Draft7Validator
@@ -14,6 +16,7 @@ from .models import InvokeContext, MemoryPolicy
 from .preset_loader import Preset, PresetLoadError, get_active_preset
 from .providers import BaseProvider, ProviderResult
 from .storage import session_store
+from .utils.redaction import cap_text, redact_secrets
 
 logger = logging.getLogger("agent-gateway")
 
@@ -128,29 +131,106 @@ def _merge_and_truncate_memory(
     context_memory: List[Dict[str, Any]] | None,
     policy: MemoryPolicy | None,
 ) -> List[Dict[str, Any]]:
-    """Merge stored_events first, then context.memory; apply max_messages and max_chars."""
+    """
+    Merge stored_events first, then context.memory; apply max_messages, max_chars,
+    and tool-aware filtering. Always keep the last K messages (config.memory_recent_k).
+    """
     if policy is None:
         policy = MemoryPolicy(mode="last_n", max_messages=10, max_chars=8000)
+
+    settings = get_settings()
+    recent_k = max(0, int(getattr(settings, "memory_recent_k", 8)))
+
     combined: List[Dict[str, Any]] = []
+
+    def _include_event(ev: Dict[str, Any]) -> Dict[str, Any] | None:
+        role = ev.get("role", "user")
+        content = ev.get("content", "")
+        event_type = ev.get("event_type") or ev.get("eventType")
+        # Infer event_type from role when missing.
+        if not event_type:
+            if role == "user":
+                event_type = "user"
+            elif role == "assistant":
+                event_type = "assistant"
+            else:
+                event_type = "system"
+        # Tool-aware filtering.
+        if event_type in ("tool_call", "tool_result"):
+            if not getattr(policy, "memory_include_tool_results", False):
+                return None
+            mode = getattr(policy, "memory_tool_result_mode", "summary") or "summary"
+            if mode == "exclude":
+                return None
+            if mode == "summary":
+                # Structured summary for tool results: tool, domain, status, short fact.
+                tool_name = ev.get("tool_name") or "tool"
+                meta = ev.get("meta") or {}
+                raw_url = ev.get("url") or meta.get("url") or ""
+                domain = ""
+                if raw_url:
+                    try:
+                        parsed = urlparse(str(raw_url))
+                        domain = parsed.hostname or ""
+                    except Exception:
+                        domain = ""
+                status_code = ev.get("status_code") or meta.get("status_code")
+                fact_source = meta.get("summary") if isinstance(meta, dict) and meta.get("summary") else content
+                fact = cap_text(str(fact_source), 200)
+                parts: List[str] = [f"tool={tool_name}"]
+                if domain:
+                    parts.append(f"domain={domain}")
+                if status_code is not None:
+                    parts.append(f"status_code={status_code}")
+                parts.append(f"fact={fact}")
+                summary = "; ".join(parts)
+                return {"role": "assistant", "content": summary}
+            # mode == "full": fall through and include as-is.
+        return {"role": role, "content": content}
+
     for e in stored_events:
-        combined.append({"role": e.get("role", "user"), "content": e.get("content", "")})
+        inc = _include_event(e)
+        if inc is not None:
+            combined.append(inc)
     if context_memory:
         for e in context_memory:
-            combined.append({"role": e.get("role", "user"), "content": e.get("content", "")})
-    # Last N by max_messages
-    n = max(0, policy.max_messages)
-    combined = combined[-n:] if n else combined
-    # Truncate by max_chars (total content length)
+            inc = _include_event(e)
+            if inc is not None:
+                combined.append(inc)
+
+    if not combined:
+        return []
+
+    # Enforce max_messages but always retain at least recent_k.
+    max_msgs = max(0, policy.max_messages)
+    if max_msgs > 0:
+        limit = max(max_msgs, recent_k)
+        if len(combined) > limit:
+            combined = combined[-limit:]
+
+    # Enforce max_chars with bias toward keeping last `recent_k` messages.
     if policy.max_chars > 0:
-        total = 0
-        out: List[Dict[str, Any]] = []
-        for e in reversed(combined):
-            total += len(e.get("content", ""))
-            if total <= policy.max_chars:
-                out.append(e)
-            else:
-                break
-        combined = list(reversed(out))
+        k = min(recent_k, len(combined))
+        older = combined[:-k] if k else combined
+        recent = combined[-k:] if k else []
+
+        # Precompute length of recent block; always keep it.
+        recent_chars = sum(len(e.get("content", "")) for e in recent)
+        remaining_budget = max(0, policy.max_chars - recent_chars)
+
+        kept_older: List[Dict[str, Any]] = []
+        if remaining_budget > 0 and older:
+            total = 0
+            for e in reversed(older):
+                content_len = len(e.get("content", ""))
+                if total + content_len <= remaining_budget:
+                    kept_older.append(e)
+                    total += content_len
+                else:
+                    break
+            kept_older = list(reversed(kept_older))
+        combined = kept_older + recent
+
     return combined
 
 
@@ -166,12 +246,90 @@ def _memory_segment_text(events: List[Dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+def _fallback_invoke_idempotency_base(
+    *,
+    session_id: str,
+    preset_id: str,
+    input_payload: Any,
+    output: Dict[str, Any],
+    now_ts: float,
+) -> str:
+    """Build deterministic-enough fallback base when request_id is unavailable."""
+    bucket = int(now_ts // 60)
+    input_summary = cap_text(json.dumps(input_payload, sort_keys=True, default=str), 300)
+    output_summary = cap_text(json.dumps(output, sort_keys=True, default=str), 300)
+    digest = hashlib.sha256(
+        f"{session_id}|{preset_id}|{input_summary}|{output_summary}|{bucket}".encode("utf-8")
+    ).hexdigest()[:16]
+    return f"invoke:{digest}"
+
+
+def write_back_session_events(
+    *,
+    session_id: str,
+    preset: Preset,
+    request_id: str | None,
+    input_payload: Dict[str, Any],
+    output: Dict[str, Any],
+    raw_text: str | None,
+) -> None:
+    """
+    Append user and assistant events to session (redacted/capped).
+    Used by process_invoke_for_preset and the runtime runner. On failure logs only; does not raise.
+    """
+    safe_input = redact_secrets(input_payload)
+    safe_output = redact_secrets(output)
+    safe_raw_text = redact_secrets(raw_text) if raw_text else None
+    user_summary = (
+        cap_text(json.dumps(safe_input, sort_keys=True, default=str), 500) if input_payload else "invoke"
+    )
+    assistant_content = (
+        cap_text(str(safe_raw_text), 2000)
+        if safe_raw_text
+        else cap_text(json.dumps(safe_output, sort_keys=True, default=str), 2000)
+    )
+    idem_base = (
+        f"invoke:{request_id}"
+        if request_id
+        else _fallback_invoke_idempotency_base(
+            session_id=session_id,
+            preset_id=preset.id,
+            input_payload=safe_input,
+            output=safe_output,
+            now_ts=time.time(),
+        )
+    )
+    try:
+        session_store.append_events(
+            session_id,
+            [
+                {
+                    "role": "user",
+                    "event_type": "user",
+                    "idempotency_key": f"{idem_base}:user",
+                    "content": user_summary,
+                    "meta": {"input": safe_input, "agent": preset.id},
+                },
+                {
+                    "role": "assistant",
+                    "event_type": "assistant",
+                    "idempotency_key": f"{idem_base}:assistant",
+                    "content": assistant_content,
+                    "meta": {"output": safe_output},
+                },
+            ],
+        )
+    except Exception as exc:
+        logger.warning("append_events failed for session_id=%s: %s", session_id, exc)
+
+
 def run_primitive(
     preset: Preset,
     provider: BaseProvider,
     input_payload: Any,
     memory_events: List[Dict[str, Any]] | None = None,
     knowledge: List[Dict[str, Any]] | None = None,
+    running_summary: str | None = None,
 ) -> ProviderResult:
     """
     Dispatch to the primitive-specific behavior.
@@ -181,6 +339,11 @@ def run_primitive(
     """
     pretty_input = json.dumps(input_payload, indent=2, sort_keys=True)
     parts = [preset.prompt.strip(), "", f"# Primitive: {preset.primitive}"]
+
+    if running_summary:
+        rs = (running_summary or "").strip()
+        if rs:
+            parts.append("# Memory (summary):\n" + rs + "\n\n")
 
     if memory_events:
         seg = _memory_segment_text(memory_events)
@@ -316,14 +479,23 @@ async def process_invoke_for_preset(
         session_id_used: str | None = None
         if context and (context.session_id or context.memory):
             stored: List[Dict[str, Any]] = []
+            running_summary: str | None = None
             if context.session_id:
                 session_id_used = context.session_id
                 session = session_store.get_session(context.session_id)
                 if session and session.get("events"):
                     stored = [
-                        {"role": e.get("role", "user"), "content": e.get("content", "")}
+                        {
+                            "role": e.get("role", "user"),
+                            "content": e.get("content", ""),
+                            "event_type": e.get("event_type"),
+                            "run_id": e.get("run_id"),
+                            "step_index": e.get("step_index"),
+                            "tool_name": e.get("tool_name"),
+                        }
                         for e in session["events"]
                     ]
+                    running_summary = str(session.get("running_summary") or "") or None
                 elif session is None:
                     logger.warning(
                         "context.session_id=%s but session not found; using stored_events=[]",
@@ -353,6 +525,7 @@ async def process_invoke_for_preset(
                 input_payload,
                 memory_events=merged_events if merged_events else None,
                 knowledge=knowledge_list,
+                running_summary=running_summary,
             )
         except Exception as exc:
             # Provider-level unexpected failures surface as INTERNAL_ERROR.
@@ -368,18 +541,27 @@ async def process_invoke_for_preset(
 
         # 6) If session_id and supports_memory: append user + assistant events. On failure log only, still 200.
         if session_id_used and getattr(preset, "supports_memory", False):
-            user_summary = json.dumps(input_payload)[:500] if input_payload else "invoke"
-            assistant_content = result.raw_text[:2000] if result.raw_text else json.dumps(output)[:2000]
+            write_back_session_events(
+                session_id=session_id_used,
+                preset=preset,
+                request_id=request_id,
+                input_payload=input_payload,
+                output=output,
+                raw_text=result.raw_text,
+            )
+            # Optionally refresh the running summary using new events.
             try:
-                session_store.append_events(
-                    session_id_used,
-                    [
-                        {"role": "user", "content": user_summary, "meta": {"input": input_payload, "agent": preset.id}},
-                        {"role": "assistant", "content": assistant_content, "meta": {"output": output}},
-                    ],
+                from app.memory.summarizer import maybe_update_running_summary
+
+                events_full = session_store.get_session_events(session_id_used)
+                maybe_update_running_summary(
+                    provider=provider,
+                    preset=preset,
+                    session_id=session_id_used,
+                    events=events_full,
                 )
-            except Exception as exc:
-                logger.warning("append_events failed for session_id=%s: %s", session_id_used, exc)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("running_summary update failed for session_id=%s: %s", session_id_used, exc)
 
         latency_ms = (time.monotonic() - start) * 1000.0
         status_code = 200
