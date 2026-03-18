@@ -35,7 +35,7 @@ class RecordingRunner:
     def __init__(self) -> None:
         self.calls: List[Tuple[str, Dict[str, Any]]] = []
 
-    def __call__(self, template: AgentTemplate, input_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def __call__(self, template: AgentTemplate, input_payload: Dict[str, Any], step_telemetry: Dict[str, Any] | None = None) -> Dict[str, Any]:
         self.calls.append((template.id, dict(input_payload)))
 
         if template.id == "repo_scout":
@@ -179,7 +179,7 @@ def test_workflow_normalizes_invalid_bundle_to_catalog_fallback_and_records_in_r
     """
     plan = build_repo_workflow({"owner": "x", "repo": "y"})
 
-    def runner(template: AgentTemplate, input_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def runner(template: AgentTemplate, input_payload: Dict[str, Any], step_telemetry: Dict[str, Any] | None = None) -> Dict[str, Any]:
         if template.id == "repo_scout":
             return {
                 "repo_summary": "Summary.",
@@ -234,7 +234,7 @@ def test_workflow_filters_invalid_and_redundant_tools_and_records_in_review_note
     """
     plan = build_repo_workflow({"owner": "x", "repo": "y"})
 
-    def runner(template: AgentTemplate, input_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def runner(template: AgentTemplate, input_payload: Dict[str, Any], step_telemetry: Dict[str, Any] | None = None) -> Dict[str, Any]:
         if template.id == "repo_scout":
             return {
                 "repo_summary": "Summary.",
@@ -286,7 +286,7 @@ def test_workflow_filters_invalid_and_redundant_tools_and_records_in_review_note
 def test_malformed_specialist_output_raises_validation_error() -> None:
     plan = build_repo_workflow({"owner": "openai", "repo": "agent-toolbox"})
 
-    def bad_runner(template: AgentTemplate, input_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def bad_runner(template: AgentTemplate, input_payload: Dict[str, Any], step_telemetry: Dict[str, Any] | None = None) -> Dict[str, Any]:
         # repo_scout returns valid output
         if template.id == "repo_scout":
             return {
@@ -318,7 +318,7 @@ def test_malformed_specialist_output_raises_validation_error() -> None:
 def test_malformed_repo_scout_output_raises_validation_error() -> None:
     plan = build_repo_workflow({"owner": "openai", "repo": "agent-toolbox"})
 
-    def bad_runner(template: AgentTemplate, input_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def bad_runner(template: AgentTemplate, input_payload: Dict[str, Any], step_telemetry: Dict[str, Any] | None = None) -> Dict[str, Any]:
         if template.id == "repo_scout":
             return {
                 "repo_summary": "A test repo.",
@@ -335,7 +335,7 @@ def test_malformed_repo_scout_output_raises_validation_error() -> None:
 def test_malformed_agent_designer_output_raises_validation_error() -> None:
     plan = build_repo_workflow({"owner": "openai", "repo": "agent-toolbox"})
 
-    def bad_runner(template: AgentTemplate, input_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def bad_runner(template: AgentTemplate, input_payload: Dict[str, Any], step_telemetry: Dict[str, Any] | None = None) -> Dict[str, Any]:
         if template.id == "repo_scout":
             return {
                 "repo_summary": "A test repo.",
