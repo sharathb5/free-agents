@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from app.catalog.loader import load_bundles_catalog, load_tools_catalog, validate_catalogs
+from app.tool_ingestion.persistence import list_platform_tools
 from app.catalog.recommendation import recommend_bundle
 from app.catalog.resolution import ResolutionError, resolve_spec_tools
 from app.engine import build_error_envelope, new_request_id
@@ -23,6 +24,22 @@ from app.recommendations.tool_recommender import (
 )
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
+
+
+def _get_merged_tools_list() -> List[Dict[str, Any]]:
+    """Return tools from static catalog merged with platform_tools (mass-imported repos)."""
+    tools_catalog = load_tools_catalog()
+    tools_list = list(tools_catalog.get("tools") or [])
+    static_ids = {t.get("tool_id") for t in tools_list if isinstance(t, dict) and t.get("tool_id")}
+    try:
+        for pt in list_platform_tools():
+            tid = pt.get("tool_id")
+            if tid and tid not in static_ids:
+                static_ids.add(tid)
+                tools_list.append(pt)
+    except Exception:
+        pass  # platform_tools may not exist; static catalog still works
+    return tools_list
 
 
 def _catalog_error(status_code: int, code: str, message: str, details: Any = None) -> JSONResponse:
@@ -57,11 +74,9 @@ async def get_catalog_tools(
     - Flat mode (flat=true or when any filter is provided): {"tools": [...]}
     """
     try:
-        tools_catalog = load_tools_catalog()
+        tools_list = _get_merged_tools_list()
     except Exception as e:
         return _catalog_error(500, "CATALOG_ERROR", str(e))
-
-    tools_list = tools_catalog.get("tools") or []
 
     # If any filter is provided or flat=true, return a flat list with frontend-friendly metadata.
     if flat or any([category, execution_kind, q, limit is not None]):
@@ -247,13 +262,11 @@ async def post_catalog_recommend_tools(request: Request) -> JSONResponse:
                 extracted_tool_ids.append(item)
 
     try:
-        tools_catalog = load_tools_catalog()
+        tools_list = _get_merged_tools_list()
         bundles_catalog = load_bundles_catalog()
+        bundles_list = bundles_catalog.get("bundles") or []
     except Exception as e:
         return _catalog_error(500, "CATALOG_ERROR", str(e))
-
-    tools_list = tools_catalog.get("tools") or []
-    bundles_list = bundles_catalog.get("bundles") or []
 
     available_tools: List[CatalogTool] = []
     for t in tools_list:
