@@ -60,7 +60,7 @@ export function AddToolsModal({
           q: query.trim() || undefined,
           category: categoryFilter === "all" ? undefined : categoryFilter,
           execution_kind: executionKindFilter === "all" ? undefined : executionKindFilter,
-          limit: 80,
+          limit: 200,
         })
         if (cancelled) return
         setRemoteTools(Array.isArray(response.tools) ? response.tools : [])

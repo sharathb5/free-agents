@@ -1,6 +1,21 @@
 "use client"
 
 export const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4280"
+const DEBUG_INGEST = "http://127.0.0.1:7244/ingest/ae01b678-64f7-4cef-bc43-0deae76993d4"
+
+function debugLog(payload: { location: string; message: string; data?: Record<string, unknown>; hypothesisId: string; runId: string }) {
+  // #region agent log
+  fetch(DEBUG_INGEST, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "db76a9" },
+    body: JSON.stringify({
+      sessionId: "db76a9",
+      timestamp: Date.now(),
+      ...payload,
+    }),
+  }).catch(() => {})
+  // #endregion agent log
+}
 
 export type UploadFlowPath = "build" | "github"
 
@@ -9,7 +24,7 @@ export interface UploadAgentDraft {
   version: string
   name: string
   description: string
-  primitive: "transform" | "extract" | "classify"
+  primitive: "transform" | "extract" | "classify" | "structured_agent"
   tags: string[]
   credits: {
     name: string
@@ -131,6 +146,20 @@ function buildErrorMessage(data: any, fallback: string) {
 async function parseJsonResponse<T>(response: Response, fallback: string): Promise<T> {
   const data = await response.json().catch(() => null)
   if (!response.ok) {
+    debugLog({
+      runId: "pre-fix",
+      hypothesisId: "H1",
+      location: "frontend/lib/agent-upload.ts:parseJsonResponse",
+      message: "Gateway request failed",
+      data: {
+        status: response.status,
+        statusText: response.statusText,
+        fallback,
+        errorCode: typeof data?.error?.code === "string" ? data.error.code : undefined,
+        errorMessage: typeof data?.error?.message === "string" ? data.error.message : undefined,
+        message: typeof data?.message === "string" ? data.message : undefined,
+      },
+    })
     throw new Error(buildErrorMessage(data, fallback))
   }
   return data as T
@@ -311,11 +340,20 @@ export async function recommendTools(input: RecommendToolsInput) {
 }
 
 export async function startRepoImport(url: string) {
+  debugLog({
+    runId: "pre-fix",
+    hypothesisId: "H4",
+    location: "frontend/lib/agent-upload.ts:startRepoImport",
+    message: "Starting repo import",
+    data: { gatewayUrl: GATEWAY_URL, repoUrlHost: (() => { try { return new URL(url).host } catch { return "invalid" } })() },
+  })
+  const execution_backend =
+    (process.env.NEXT_PUBLIC_REPO_TO_AGENT_BACKEND || "").trim() || "internal"
   return parseJsonResponse<RepoRunResponse>(
     await fetch(`${GATEWAY_URL}/repo-to-agent/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, execution_backend }),
     }),
     "Failed to start repository import"
   )
