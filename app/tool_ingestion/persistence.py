@@ -132,7 +132,8 @@ def insert_tool_candidates(candidates: Iterable[ToolCandidate]) -> int:
         return 0
 
     with connect() as conn:
-        conn.executemany(
+        cur = conn.cursor()
+        cur.executemany(
             sql(
                 """
                 INSERT INTO tool_candidates (
@@ -198,7 +199,45 @@ def insert_platform_tools(candidates: Iterable[ToolCandidate]) -> int:
         insert_sql = insert_sql.strip() + " ON CONFLICT(tool_id) DO NOTHING"
 
     with connect() as conn:
-        conn.executemany(sql(insert_sql), rows)
+        cur = conn.cursor()
+        cur.executemany(sql(insert_sql), rows)
         conn.commit()
     return len(rows)
+
+
+def list_platform_tools() -> List[Dict[str, Any]]:
+    """
+    Return all promoted tools from platform_tools for catalog merge.
+    Each row is a dict with tool_id, name, description, category, execution_kind,
+    confidence, source_repo, source_path, promotion_reason.
+    """
+    init_tool_ingestion_db()
+    with connect() as conn:
+        cur = conn.execute(
+            """
+            SELECT tool_id, name, description, capability_category, execution_kind,
+                   confidence, source_repo, source_path, promotion_reason
+            FROM platform_tools
+            ORDER BY tool_id
+            """
+        )
+        rows = cur.fetchall()
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        row = dict(r) if hasattr(r, "keys") else r
+        tool_id = row.get("tool_id")
+        if not tool_id:
+            continue
+        out.append({
+            "tool_id": tool_id,
+            "name": row.get("name") or tool_id,
+            "description": row.get("description"),
+            "category": row.get("capability_category") or "Other",
+            "execution_kind": row.get("execution_kind") or "general",
+            "confidence": row.get("confidence"),
+            "source_repo": row.get("source_repo"),
+            "source_path": row.get("source_path"),
+            "promotion_reason": row.get("promotion_reason"),
+        })
+    return out
 
