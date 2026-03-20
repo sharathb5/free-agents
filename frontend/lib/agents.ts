@@ -1,4 +1,4 @@
-export type Primitive = "transform" | "extract" | "classify"
+export type Primitive = "transform" | "extract" | "classify" | "structured_agent"
 
 export interface AgentSummary {
   id: string

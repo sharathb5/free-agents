@@ -18,6 +18,7 @@ const primitiveColors: Record<string, string> = {
   transform: "bg-blue-bayoux/18 text-pampas border-rock-blue/20",
   extract: "bg-rock-blue/16 text-pampas border-rock-blue/20",
   classify: "bg-pampas/8 text-pampas border-rock-blue/20",
+  structured_agent: "bg-blue-bayoux/18 text-pampas border-rock-blue/20",
 }
 
 const primitiveGlow: Record<string, { border: string; glow: string }> = {
@@ -32,6 +33,10 @@ const primitiveGlow: Record<string, { border: string; glow: string }> = {
   classify: {
     border: "rgba(171, 172, 90, 0.34)", // olive-green (sparingly)
     glow: "rgba(171, 172, 90, 0.18)",
+  },
+  structured_agent: {
+    border: "rgba(73, 102, 119, 0.40)",
+    glow: "rgba(73, 102, 119, 0.28)",
   },
 }
 

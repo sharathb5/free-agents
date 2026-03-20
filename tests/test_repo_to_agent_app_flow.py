@@ -22,7 +22,7 @@ from app.repo_to_agent.templates import (
 @patch("app.repo_to_agent.app_flow.run_specialist_with_internal_runner")
 def test_run_repo_to_agent_internal_returns_result(mock_runner: object) -> None:
     """run_repo_to_agent(..., execution_backend='internal') returns RepoToAgentResult."""
-    def fake_runner(template: object, input_payload: object) -> dict:
+    def fake_runner(template: object, input_payload: object, step_telemetry: object | None = None) -> dict:
         tid = getattr(template, "id", "")
         if tid == "repo_scout":
             return {
@@ -153,10 +153,10 @@ def test_openai_runner_falls_back_to_internal_on_max_turns(
     """repo_scout/architect should fall back to internal on MaxTurnsExceeded-like errors."""
     import app.repo_to_agent.app_flow as flow
 
-    class FakeMaxTurnsExceeded(Exception):
+    class MaxTurnsExceeded(Exception):
         pass
 
-    FakeMaxTurnsExceeded.__module__ = "agents.runtime"
+    MaxTurnsExceeded.__module__ = "agents.runtime"
 
     captured = {}
 
@@ -179,7 +179,7 @@ def test_openai_runner_falls_back_to_internal_on_max_turns(
     mock_generate.side_effect = fake_generate
 
     def raising_openai(*_args, **_kwargs):
-        raise FakeMaxTurnsExceeded("max turns exceeded")
+        raise MaxTurnsExceeded("max turns exceeded")
 
     mock_openai.side_effect = raising_openai
     mock_internal.return_value = {

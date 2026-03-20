@@ -477,9 +477,9 @@ async def process_invoke_for_preset(
         merged_events: List[Dict[str, Any]] = []
         memory_used_count = 0
         session_id_used: str | None = None
+        running_summary: str | None = None
         if context and (context.session_id or context.memory):
             stored: List[Dict[str, Any]] = []
-            running_summary: str | None = None
             if context.session_id:
                 session_id_used = context.session_id
                 session = session_store.get_session(context.session_id)
