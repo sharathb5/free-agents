@@ -98,6 +98,36 @@ export interface RecommendToolsResult {
   debug?: Record<string, unknown> | null
 }
 
+export interface GitHubRepoSummary {
+  id: number | string
+  name: string
+  full_name: string
+  owner_login: string
+  html_url: string
+  default_branch?: string | null
+  private?: boolean
+  installation_type?: "oauth" | "unknown"
+}
+
+export interface GitHubConnectionState {
+  status: "disconnected" | "connecting" | "connected" | "error"
+  provider: "github"
+  message?: string | null
+  oauth_configured?: boolean
+}
+
+export interface GitHubOAuthStartResponse {
+  provider: "github"
+  status: "not_configured" | "ready"
+  authorization_url?: string | null
+  message?: string | null
+}
+
+export interface GitHubRepoListResponse {
+  repos: GitHubRepoSummary[]
+  connection: GitHubConnectionState
+}
+
 export interface RepoDiscoveredTool {
   name: string
   tool_type: string
@@ -137,6 +167,10 @@ interface RepoRunResponse {
 
 interface RepoRunStatus {
   status: string
+}
+
+export function githubRepoToImportUrl(repo: Pick<GitHubRepoSummary, "html_url">) {
+  return repo.html_url
 }
 
 function buildErrorMessage(data: any, fallback: string) {
@@ -337,6 +371,20 @@ export async function recommendTools(input: RecommendToolsInput) {
     rationale: typeof response?.rationale === "string" ? response.rationale : null,
     debug: response?.debug && typeof response.debug === "object" ? response.debug : null,
   } satisfies RecommendToolsResult
+}
+
+export async function startGitHubOAuth() {
+  return parseJsonResponse<GitHubOAuthStartResponse>(
+    await fetch(`${GATEWAY_URL}/github/oauth/start`, { cache: "no-store" }),
+    "GitHub OAuth is not available yet"
+  )
+}
+
+export async function fetchGitHubRepos() {
+  return parseJsonResponse<GitHubRepoListResponse>(
+    await fetch(`${GATEWAY_URL}/github/repos`, { cache: "no-store" }),
+    "GitHub repository listing is not available yet"
+  )
 }
 
 export async function startRepoImport(url: string) {

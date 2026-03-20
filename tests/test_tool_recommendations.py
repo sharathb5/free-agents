@@ -73,6 +73,12 @@ def test_filesystem_search_agent_prefers_filesystem_bundle_and_tools() -> None:
     assert result.bundle_id == "filesystem_search"
     assert any(tid in result.additional_tool_ids for tid in ("glob_search", "grep_search", "file_tool", "shell_tool")) or result.additional_tool_ids == []
     assert any("filesystem" in r.lower() or "search" in r.lower() for r in result.rationale)
+    assert result.debug is not None
+    assert "file_search" in result.debug.inferred_capabilities
+    assert result.debug.inferred_capabilities["file_search"].score > 0
+    assert "file_operation" in result.debug.inferred_execution_types
+    assert result.debug.inferred_execution_types["file_operation"].score > 0
+    assert "file_search" in result.debug.detected_signals
 
 
 def test_github_release_agent_prefers_github_bundle_and_tools() -> None:
@@ -98,6 +104,10 @@ def test_github_release_agent_prefers_github_bundle_and_tools() -> None:
     assert result.bundle_id == "github_automation"
     assert "tag_release" in (result.additional_tool_ids + bundles[0].tools)
     assert any("github" in r.lower() or "release" in r.lower() for r in result.rationale)
+    assert result.debug is not None
+    assert result.debug.inferred_capabilities["release_workflow"].score > 0
+    assert result.debug.inferred_execution_types["cli_command"].score > 0
+    assert "release_workflow" in result.debug.detected_signals
 
 
 def test_summarizer_transform_agent_avoids_heavy_bundles() -> None:
@@ -124,6 +134,9 @@ def test_summarizer_transform_agent_avoids_heavy_bundles() -> None:
         tid in ("http_request", "glob_search") for tid in result.additional_tool_ids
     )
     assert any("summarize" in r.lower() or "transform" in r.lower() or "avoiding heavy" in r.lower() for r in result.rationale)
+    assert result.debug is not None
+    assert result.debug.inferred_capabilities["text_generation"].score > 0
+    assert result.debug.inferred_execution_types["text_transform"].score > 0
 
 
 def test_mcp_like_extracted_tools_are_preserved() -> None:
@@ -146,6 +159,9 @@ def test_mcp_like_extracted_tools_are_preserved() -> None:
     result = recommend_tools_for_agent(agent, tools, bundles)
 
     assert "mcp_fetch" in result.additional_tool_ids
+    assert result.debug is not None
+    assert result.debug.inferred_capabilities["mcp_tool"].score > 0
+    assert result.debug.inferred_execution_types["mcp_tool"].score > 0
 
 
 def test_no_match_fallback_behavior() -> None:
@@ -164,6 +180,9 @@ def test_no_match_fallback_behavior() -> None:
     assert result.bundle_id is None or result.bundle_id == "no_tools_writer"
     assert result.additional_tool_ids == []
     assert any("no bundle" in r.lower() or "conservative" in r.lower() for r in result.rationale)
+    assert result.debug is not None
+    # Low-signal agent should not produce strong capabilities/execution types.
+    assert max(v.score for v in result.debug.inferred_capabilities.values()) == 0.0
 
 
 def test_deterministic_output_for_same_input() -> None:

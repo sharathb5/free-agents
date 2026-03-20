@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
@@ -104,7 +105,7 @@ def _logs_tail(n: int = 100) -> None:
 
 
 def _logs_show(run_id: str) -> None:
-    """Print log lines for the given run_id."""
+    """Print log lines for the given run_id (matches run_id or runId field only)."""
     path = os.environ.get("FREE_AGENTS_LOG_PATH")
     if not path:
         path = str(Path.home() / ".free_agents" / "logs.jsonl")
@@ -113,8 +114,19 @@ def _logs_show(run_id: str) -> None:
         return
     with open(path) as f:
         for line in f:
-            if run_id in line:
-                print(line.rstrip())
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            # Match run_id or runId field exactly (avoid substring matches in output, etc.)
+            rec_run_id = rec.get("run_id") or rec.get("runId")
+            if rec_run_id == run_id:
+                print(line)
 
 
 def _run_bootstrap(venv_dir: str = ".venv") -> None:

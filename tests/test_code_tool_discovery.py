@@ -35,6 +35,25 @@ def test_get_paths_to_inspect_prioritizes_agent_tool_paths():
     assert any("tools" in p or "app" in p for p in paths)
 
 
+def test_get_paths_to_inspect_excludes_test_fixture_example_paths():
+    scout = {
+        "important_files": [
+            "src/agent.py",
+            "tests/test_agent_tools.py",
+            "fixtures/demo_tool.py",
+            "examples/sample_tool.py",
+        ]
+    }
+    arch = {"key_paths": ["app/server.py", "test/helpers.py"]}
+    paths = get_paths_to_inspect_for_code_tools(scout, arch)
+    assert "src/agent.py" in paths
+    assert "app/server.py" in paths
+    assert "tests/test_agent_tools.py" not in paths
+    assert "fixtures/demo_tool.py" not in paths
+    assert "examples/sample_tool.py" not in paths
+    assert "test/helpers.py" not in paths
+
+
 # ---- Python: @tool ----
 def test_detect_python_tool_decorator():
     content = '''
@@ -245,13 +264,10 @@ def test_merge_dedup_same_key_keeps_higher_confidence():
         )
     ]
     merged = merge_discovered_tools(manifest, code)
-    # Different source_path so both can appear
     names = [t.name for t in merged]
     assert "search" in names
-    # If same (name, type, path) we keep higher confidence
-    by_key = {(t.name, t.tool_type, t.source_path): t for t in merged}
-    assert by_key.get(("search", "code_tool", "src/tools.ts")) is not None or \
-           by_key.get(("search", "script", "package.json")) is not None
+    # Same canonical name: consolidation keeps one (prefer higher priority/confidence)
+    assert len([t for t in merged if t.name == "search"]) == 1
 
 
 def test_merge_no_duplicate_same_name_type_path():

@@ -222,6 +222,7 @@ export default function MarketplacePage() {
     { value: "transform", label: "Transform" },
     { value: "extract", label: "Extract" },
     { value: "classify", label: "Classify" },
+    { value: "structured_agent", label: "Structured Agent" },
   ]
 
   return (

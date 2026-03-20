@@ -47,7 +47,12 @@ def connect() -> Any:
     if info.dialect == "postgres":
         if psycopg is None:
             raise RuntimeError("psycopg is required for Postgres connections")
-        return psycopg.connect(info.database_url, row_factory=dict_row)
+        try:
+            return psycopg.connect(info.database_url, row_factory=dict_row)
+        except Exception as exc:
+            # Never leak DATABASE_URL credentials via exception text/tracebacks.
+            # psycopg errors can include conninfo attempts with passwords.
+            raise RuntimeError(f"Postgres connection failed ({type(exc).__name__})") from None
     conn = sqlite3.connect(info.db_path)
     conn.row_factory = sqlite3.Row
     return conn

@@ -15,6 +15,7 @@ from .http_tool import ToolExecutionError
 # Deterministic order for important-file detection (top-level and common paths).
 IMPORTANT_FILE_CANDIDATES = [
     "README.md",
+    "agent.json",
     "package.json",
     "pyproject.toml",
     "requirements.txt",
@@ -32,6 +33,7 @@ IMPORTANT_FILE_CANDIDATES = [
     "index.js",
     "src/index.ts",
     "src/index.tsx",
+    "prompts/system_prompt.md",
 ]
 
 VALID_MODES = frozenset({"overview", "tree", "file", "sample"})
@@ -85,16 +87,21 @@ def _detect_important_files(
 ) -> List[str]:
     """Return paths that match IMPORTANT_FILE_CANDIDATES, in deterministic order."""
     found: List[str] = []
+    # Compare case-insensitively so repos with readme.md/ReadMe.md still surface
+    # core files in scout outputs and downstream validation.
     for cand in IMPORTANT_FILE_CANDIDATES:
+        cand_lower = cand.lower()
         for e in entries:
             p = (e.get("path") or e.get("name") or "").strip()
             if not p:
                 continue
             if not include_hidden and p.split("/")[-1].startswith("."):
                 continue
-            if p == cand or p.endswith("/" + cand):
+            p_lower = p.lower()
+            if p_lower == cand_lower or p_lower.endswith("/" + cand_lower):
                 found.append(p)
                 break
+    # Keep deterministic ordering by candidate list; no extra sorting.
     return found
 
 

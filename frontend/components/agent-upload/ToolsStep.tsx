@@ -89,11 +89,11 @@ export function ToolsStep({
                 type="button"
                 onClick={() => onSelectBundle(bundle.bundle_id)}
                 className={cn(
-                  "rounded-2xl border p-4 text-left transition",
+                  "flex h-full flex-col rounded-2xl border p-4 text-left transition",
                   isSelected ? "border-blue-bayoux bg-blue-bayoux/10" : "border-rock-blue/14 bg-kilamanjaro/35 hover:border-rock-blue/24"
                 )}
               >
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-1 items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-pampas">{bundle.title || bundle.bundle_id}</p>
                     <p className="mt-1 text-sm text-pampas/58">{bundle.description || "No description yet."}</p>

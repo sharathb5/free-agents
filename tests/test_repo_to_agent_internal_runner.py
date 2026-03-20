@@ -114,6 +114,8 @@ def test_run_specialist_agent_designer_returns_valid_draft_without_tools() -> No
     assert out.draft_agent_spec.get("id") == "draft-from-repo"
     assert out.draft_agent_spec.get("version") == "0.1.0"
     assert "prompt" in out.draft_agent_spec
+    rec_debug = out.draft_agent_spec.get("recommendation_debug") or {}
+    assert rec_debug.get("inferred_execution_types", {}).get("file_operation", {}).get("score", 0.0) > 0
 
 
 def test_run_specialist_agent_reviewer_returns_valid_review_stub() -> None:

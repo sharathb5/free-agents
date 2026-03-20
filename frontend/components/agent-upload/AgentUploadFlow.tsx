@@ -48,6 +48,22 @@ const IMPORT_STAGES = [
   "Generating recommendations",
 ] as const
 
+const DEBUG_INGEST = "http://127.0.0.1:7244/ingest/ae01b678-64f7-4cef-bc43-0deae76993d4"
+
+function debugLog(payload: { location: string; message: string; data?: Record<string, unknown>; hypothesisId: string; runId: string }) {
+  // #region agent log
+  fetch(DEBUG_INGEST, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "db76a9" },
+    body: JSON.stringify({
+      sessionId: "db76a9",
+      timestamp: Date.now(),
+      ...payload,
+    }),
+  }).catch(() => {})
+  // #endregion agent log
+}
+
 function normalizeToolIdCandidate(value: string) {
   return value
     .trim()
@@ -332,9 +348,27 @@ export function AgentUploadFlow() {
         setRecommendationRationale(null)
         setReviewNotes(output.review_notes || [])
         const discovered = output.discovered_repo_tools || []
+        const wrapped = output.wrapped_repo_tools || []
         setExtractedTools(discovered)
         setExtractedToolIds(inferExtractedToolIds({ extractedTools: discovered, toolCategories }))
-        setWrappedRepoTools(output.wrapped_repo_tools || [])
+        setWrappedRepoTools(wrapped)
+        debugLog({
+          runId: "pre-fix",
+          hypothesisId: "H7",
+          location: "frontend/components/agent-upload/AgentUploadFlow.tsx:repoPollTick",
+          message: "Frontend received tools from API (what we surface)",
+          data: {
+            stage: "frontend_received",
+            discovered_repo_tools_count: discovered.length,
+            discovered_repo_tools: discovered.map((t: { name?: string; tool_type?: string; source_path?: string }) => ({
+              name: t.name,
+              tool_type: t.tool_type,
+              source_path: t.source_path,
+            })),
+            wrapped_repo_tools_count: wrapped.length,
+            wrapped_repo_tools: wrapped.map((t: { name?: string; tool_type?: string }) => ({ name: t.name, tool_type: t.tool_type })),
+          },
+        })
         setImportLoading(false)
         setImportProgressIndex(IMPORT_STAGES.length - 1)
         setStep(1)
@@ -342,6 +376,16 @@ export function AgentUploadFlow() {
       } catch (error) {
         if (cancelled) return
         setImportLoading(false)
+        debugLog({
+          runId: "pre-fix",
+          hypothesisId: "H3",
+          location: "frontend/components/agent-upload/AgentUploadFlow.tsx:repoPollTick",
+          message: "Repo import polling failed",
+          data: {
+            repoRunId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        })
         setImportError(error instanceof Error ? error.message : "Failed to import repository")
       }
     }
@@ -544,6 +588,7 @@ export function AgentUploadFlow() {
                 onChange={setDraft}
                 mode={path}
                 helperText={path === "github" ? "Parsed fields can be edited before you continue." : "Start with the core details; the rest of the flow will adapt."}
+                reviewNotes={path === "github" ? reviewNotes : undefined}
               />
             )}
 

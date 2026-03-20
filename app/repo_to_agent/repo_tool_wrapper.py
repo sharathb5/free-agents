@@ -88,10 +88,18 @@ def wrap_discovered_tools(discovered_tools: List[DiscoveredRepoTool]) -> List[Wr
     """
     out: List[WrappedRepoTool] = []
     for t in discovered_tools:
+        # Capabilities / likely_tools are *signals* from agent.json, not executable tools.
+        # Keeping them out of wrapped_repo_tools makes the "Promoted repo tool metadata"
+        # panel represent actually-wrapped (actionable) tools rather than duplicating
+        # the raw extracted list.
+        tool_type_raw = (t.tool_type or "").strip().lower()
+        if tool_type_raw in {"capability", "likely_tool"}:
+            continue
+
         risk = classify_tool_risk(t)
         safe = is_safe_to_auto_expose(t)
 
-        tool_type = (t.tool_type or "").strip().lower()
+        tool_type = tool_type_raw
         name = (t.name or "").strip() or "unknown"
         command = (t.command or "").strip() or None
         description = (t.description or "").strip() or None

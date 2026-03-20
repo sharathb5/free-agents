@@ -19,6 +19,21 @@ CODE_EXTENSIONS = (".py", ".ts", ".tsx", ".js", ".jsx")
 PRIORITY_PATH_SEGMENTS = ("agents", "tools", "src", "app", "server")
 PRIORITY_NAME_SUBSTRINGS = ("agent", "tool", "mcp", "server", "assistant", "workflow")
 
+# Low-signal paths that are often noisy in demo output (fixtures/examples/tests).
+EXCLUDED_PATH_SEGMENTS = (
+    "tests",
+    "test",
+    "__tests__",
+    "fixtures",
+    "fixture",
+    "examples",
+    "example",
+    "sample",
+    "samples",
+    "mock",
+    "mocks",
+)
+
 # Confidence values.
 CONF_HIGH = 0.9
 CONF_MEDIUM = 0.75
@@ -66,6 +81,8 @@ def get_paths_to_inspect_for_code_tools(scout: Any, arch: Any) -> List[str]:
         if not any(p_lower.endswith(ext) for ext in CODE_EXTENSIONS):
             continue
         parts = [s.lower() for s in p.split("/") if s]
+        if any(seg in parts for seg in EXCLUDED_PATH_SEGMENTS):
+            continue
         priority = 100
         for seg in PRIORITY_PATH_SEGMENTS:
             if seg in parts:
@@ -440,23 +457,47 @@ def discover_code_defined_tools(
     return result
 
 
+_TOOL_TYPE_PRIORITY: Dict[str, int] = {
+    "tool_definition": 4,
+    "cli": 3,
+    "script": 3,
+    "python_script": 3,
+    "make_target": 3,
+    "http_api": 3,
+    "mcp_server": 3,
+    "code_tool": 3,
+    "capability": 2,
+    "likely_tool": 1,
+}
+
+
+def _canonical_tool_name(name: str) -> str:
+    """Normalize tool name for deduplication."""
+    return (name or "").strip().lower().replace("-", "_").replace(" ", "_") or ""
+
+
 def merge_discovered_tools(
     manifest_tools: List[DiscoveredRepoTool],
     code_tools: List[DiscoveredRepoTool],
 ) -> List[DiscoveredRepoTool]:
     """
-    Merge manifest/file-based and code-defined discoveries with conservative dedup.
+    Merge manifest/file-based and code-defined discoveries with consolidation.
 
-    Dedup by (name, tool_type, source_path). When duplicate: keep higher confidence;
-    if same confidence, keep manifest version first.
+    When the same tool appears from multiple sources (e.g. github_search from
+    tools/*.json and agent.json capabilities), prefer tool_definition > capability
+    > likely_tool. This reduces noise and duplicates in the extracted tool list.
     """
-    by_key: Dict[tuple[str, str, str], DiscoveredRepoTool] = {}
-    for t in manifest_tools:
-        key = (t.name.strip(), t.tool_type.strip(), (t.source_path or "").strip())
-        if key not in by_key or (t.confidence or 0) > (by_key[key].confidence or 0):
-            by_key[key] = t
-    for t in code_tools:
-        key = (t.name.strip(), t.tool_type.strip(), (t.source_path or "").strip())
-        if key not in by_key or (t.confidence or 0) > (by_key[key].confidence or 0):
-            by_key[key] = t
-    return list(by_key.values())
+    combined = list(manifest_tools) + list(code_tools)
+    by_canonical: Dict[str, DiscoveredRepoTool] = {}
+    for t in combined:
+        canon = _canonical_tool_name(t.name)
+        if not canon:
+            continue
+        priority = _TOOL_TYPE_PRIORITY.get(t.tool_type, 0)
+        existing = by_canonical.get(canon)
+        existing_priority = _TOOL_TYPE_PRIORITY.get(existing.tool_type, 0) if existing else -1
+        if existing is None or priority > existing_priority:
+            by_canonical[canon] = t
+        elif priority == existing_priority and (t.confidence or 0) > (existing.confidence or 0):
+            by_canonical[canon] = t
+    return list(by_canonical.values())

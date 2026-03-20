@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -32,6 +33,32 @@ from .templates import (
 )
 
 logger = logging.getLogger(__name__)
+
+_DEBUG_LOG_PATH = "/Users/sharath/agent-toolbox/agent-toolbox/.cursor/debug-db76a9.log"
+
+
+def _debug_log(*, hypothesis_id: str, location: str, message: str, data: Dict[str, Any] | None = None, run_id: str = "pre-fix") -> None:
+    # #region agent log
+    try:
+        payload: Dict[str, Any] = {
+            "sessionId": "db76a9",
+            "timestamp": int(time.time() * 1000),
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data or {},
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion agent log
+
+
+def _safe_trim(s: Any, max_len: int = 200) -> str:
+    out = str(s or "")
+    return out[:max_len]
 
 
 @dataclass
@@ -212,6 +239,17 @@ def run_repo_to_agent_workflow(
     scout_input: Dict[str, Any] = dict(base_input)
     scout_raw = _run_step(REPO_SCOUT_TEMPLATE, scout_input)
     scout_output = RepoScoutOutput.model_validate(scout_raw)
+    _debug_log(
+        hypothesis_id="H5",
+        location="app/repo_to_agent/workflow.py:repo_scout",
+        message="Repo scout output",
+        data={
+            "stage": "scout",
+            "important_files_count": len(scout_output.important_files),
+            "important_files": scout_output.important_files[:20],
+            "repo_summary_head": _safe_trim(scout_output.repo_summary, 180),
+        },
+    )
     repo_size_hint["important_files_count"] = len(scout_output.important_files)
     repo_size_hint["language_hints_count"] = len(scout_output.language_hints)
     repo_size_hint["framework_hints_count"] = len(scout_output.framework_hints)
@@ -221,6 +259,17 @@ def run_repo_to_agent_workflow(
     architect_input["scout_summary"] = scout_output.model_dump()
     architect_raw = _run_step(REPO_ARCHITECT_TEMPLATE, architect_input)
     architect_output = RepoArchitectureOutput.model_validate(architect_raw)
+    _debug_log(
+        hypothesis_id="H5",
+        location="app/repo_to_agent/workflow.py:repo_architect",
+        message="Repo architect output",
+        data={
+            "stage": "architect",
+            "key_paths_count": len(architect_output.key_paths),
+            "key_paths": architect_output.key_paths[:30],
+            "entrypoints": architect_output.entrypoints[:10],
+        },
+    )
     repo_size_hint["key_paths_count"] = len(architect_output.key_paths)
 
     # 3. repo_tool_discovery (deterministic; runner returns discovered_tools)
@@ -236,9 +285,152 @@ def run_repo_to_agent_workflow(
     code_tools_raw = code_discovery_raw.get("code_tools") or []
     code_tools = [DiscoveredRepoTool.model_validate(t) for t in code_tools_raw]
     discovered_repo_tools = merge_discovered_tools(manifest_tools, code_tools)
+    _debug_log(
+        hypothesis_id="H7",
+        location="app/repo_to_agent/workflow.py:discovery_merge",
+        message="Discovery merge result",
+        data={
+            "stage": "discovery_merge",
+            "manifest_tools_count": len(manifest_tools),
+            "manifest_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in manifest_tools],
+            "code_tools_count": len(code_tools),
+            "code_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in code_tools],
+            "discovered_repo_tools_count": len(discovered_repo_tools),
+            "discovered_repo_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in discovered_repo_tools],
+        },
+    )
 
     # 5. repo_tool_wrapper (deterministic; in-process; no runner call)
     wrapped_repo_tools: List[WrappedRepoTool] = wrap_discovered_tools(discovered_repo_tools)
+
+    # 5b. Contract import (deterministic): if repo contains agent.json and/or prompts/system_prompt.md,
+    # treat them as authoritative for id/name/description/prompt/tags/schemas (instead of overfitting to repo code paths).
+    contract_overrides: Dict[str, Any] = {}
+    contract_notes: List[str] = []
+    agent_obj: Dict[str, Any] = {}
+    contract_bundle_override: Optional[str] = None
+    contract_tools_override: Optional[List[str]] = None
+    try:
+        from app.preset_loader import Preset
+        from app.runtime.tools.registry import DefaultToolRegistry, build_run_context
+
+        preset = Preset(
+            id="repo_contract_import",
+            version="internal",
+            name="repo_contract_import",
+            description="Deterministic contract importer (agent.json + prompts).",
+            primitive="repo_contract_import",
+            input_schema={"type": "object", "properties": {}, "additionalProperties": True},
+            output_schema={"type": "object", "properties": {}, "additionalProperties": True},
+            prompt="",
+            supports_memory=False,
+            memory_policy=None,
+            allowed_tools=["github_repo_read"],
+            http_allowed_domains=None,
+            tool_policies={"github_repo_read": {"max_entries": 200, "max_file_chars": 20_000}},
+            resolved_execution_limits={"max_tool_calls": 12},
+        )
+        run_context = build_run_context(run_id=f"repo_contract_import_{plan.owner}_{plan.repo}", preset=preset)
+        registry = DefaultToolRegistry()
+
+        def _read_file(path: str) -> str:
+            out = registry.execute(
+                "github_repo_read",
+                {"owner": plan.owner, "repo": plan.repo, "mode": "file", "path": path, **({"ref": plan.ref} if plan.ref else {})},
+                run_context,
+            )
+            content = out.get("content") or ""
+            return content if isinstance(content, str) else ""
+
+        agent_json_text = _read_file("agent.json")
+        system_prompt_text = _read_file("prompts/system_prompt.md")
+        contract_notes.append(f"contract_import: agent.json bytes={len(agent_json_text)} prompt bytes={len(system_prompt_text)}")
+        agent_obj: Dict[str, Any] = {}
+        if agent_json_text.strip():
+            try:
+                parsed = json.loads(agent_json_text)
+                if isinstance(parsed, dict):
+                    agent_obj = parsed
+            except Exception as exc:
+                contract_notes.append(f"contract_import: agent.json parse failed: {type(exc).__name__}")
+        if agent_obj:
+            # Map agent.json fields into our draft_agent_spec shape.
+            if isinstance(agent_obj.get("id"), str) and agent_obj["id"].strip():
+                contract_overrides["id"] = agent_obj["id"].strip()
+            if isinstance(agent_obj.get("name"), str) and agent_obj["name"].strip():
+                contract_overrides["name"] = agent_obj["name"].strip()
+            if isinstance(agent_obj.get("description"), str) and agent_obj["description"].strip():
+                contract_overrides["description"] = agent_obj["description"].strip()
+            if isinstance(agent_obj.get("tags"), list):
+                contract_overrides["tags"] = [str(t).strip() for t in agent_obj["tags"] if str(t).strip()]
+            if isinstance(agent_obj.get("input_schema"), dict):
+                contract_overrides["input_schema"] = agent_obj["input_schema"]
+            if isinstance(agent_obj.get("output_schema"), dict):
+                contract_overrides["output_schema"] = agent_obj["output_schema"]
+            # Primitive mapping: pass through transform/extract/classify/structured_agent.
+            prim = agent_obj.get("primitive")
+            if isinstance(prim, str) and prim.strip():
+                prim_raw = prim.strip()
+                if prim_raw in {"transform", "extract", "classify", "structured_agent"}:
+                    contract_overrides["primitive"] = prim_raw
+                else:
+                    contract_notes.append(f"contract_import: primitive {prim_raw!r} not supported; using transform")
+                    contract_overrides["primitive"] = "transform"
+        if system_prompt_text.strip():
+            prompt_text = system_prompt_text.strip()
+            if prompt_text.startswith("# "):
+                first_nl = prompt_text.find("\n")
+                if first_nl > 0 and "system prompt" in prompt_text[:first_nl].lower():
+                    prompt_text = prompt_text[first_nl:].lstrip("\n")
+            contract_overrides["prompt"] = prompt_text
+        if isinstance(agent_obj.get("supports_memory"), bool):
+            contract_overrides["supports_memory"] = agent_obj["supports_memory"]
+        if isinstance(agent_obj.get("memory"), dict) and agent_obj["memory"]:
+            mem = agent_obj["memory"]
+            mode = str(mem.get("type") or "last_n").lower()
+            if "summary" in mode or "buffer" in mode:
+                mode = "last_n"
+            contract_overrides["memory_policy"] = {
+                "mode": mode,
+                "max_messages": int(mem.get("max_items") or mem.get("max_messages") or 10),
+                "max_chars": int(mem.get("max_chars") or 8000),
+            }
+    except Exception as exc:
+        contract_notes.append(f"contract_import: skipped due to error: {type(exc).__name__}")
+
+    if agent_obj:
+        caps = agent_obj.get("capabilities") or []
+        if isinstance(caps, list) and any(
+            isinstance(c, str) and ("github" in c.lower() or "file" in c.lower() or "search" in c.lower() or "changelog" in c.lower())
+            for c in caps
+        ):
+            contract_bundle_override = "github_reader"
+            contract_notes.append("contract_import: bundle github_reader from agent.json capabilities")
+        tool_ids = []
+        for c in caps:
+            if isinstance(c, str) and c.strip():
+                tid = c.strip().replace("-", "_").replace(" ", "_")
+                if tid in ("github_repo_read", "http_request"):
+                    tool_ids.append(tid)
+                elif "github" in tid.lower():
+                    tool_ids.append("github_repo_read")
+        if tool_ids:
+            contract_tools_override = list(dict.fromkeys(tool_ids))
+
+    _debug_log(
+        hypothesis_id="H5",
+        location="app/repo_to_agent/workflow.py:contract_import",
+        message="Contract import attempt",
+        data={
+            "stage": "contract_import",
+            "overrides_keys": sorted(list(contract_overrides.keys())),
+            "notes": contract_notes[:5],
+            "contract_bundle_override": contract_bundle_override,
+            "contract_tools_override": contract_tools_override,
+            "agent_json_capabilities": agent_obj.get("capabilities") if agent_obj else None,
+            "agent_json_likely_tools": agent_obj.get("likely_tools") if agent_obj else None,
+        },
+    )
 
     # 6. agent_designer (repo coords + scout + architecture + discovered + wrapped tools for awareness only)
     designer_input: Dict[str, Any] = dict(base_input)
@@ -248,6 +440,31 @@ def run_repo_to_agent_workflow(
     designer_input["wrapped_repo_tools"] = [t.model_dump() for t in wrapped_repo_tools]
     draft_raw = _run_step(AGENT_DESIGNER_TEMPLATE, designer_input)
     draft_output = AgentDraftOutput.model_validate(draft_raw)
+    _debug_log(
+        hypothesis_id="H5",
+        location="app/repo_to_agent/workflow.py:agent_designer",
+        message="Agent designer output (summary)",
+        data={
+            "recommended_bundle": draft_output.recommended_bundle,
+            "recommended_additional_tools_count": len(draft_output.recommended_additional_tools or []),
+            "draft_id": (draft_output.draft_agent_spec or {}).get("id"),
+            "draft_name_head": _safe_trim((draft_output.draft_agent_spec or {}).get("name"), 80),
+            "desc_head": _safe_trim((draft_output.draft_agent_spec or {}).get("description"), 140),
+            "prompt_head": _safe_trim((draft_output.draft_agent_spec or {}).get("prompt"), 160),
+        },
+    )
+
+    # Apply contract overrides (if any) so we don't overfit to implementation files.
+    if contract_overrides and isinstance(draft_output.draft_agent_spec, dict):
+        merged = dict(draft_output.draft_agent_spec)
+        merged.update(contract_overrides)
+        draft_output = draft_output.model_copy(update={"draft_agent_spec": merged})
+        if contract_notes:
+            fallback_notes.extend(contract_notes)
+    if contract_bundle_override:
+        draft_output = draft_output.model_copy(update={"recommended_bundle": contract_bundle_override})
+    if contract_tools_override is not None:
+        draft_output = draft_output.model_copy(update={"recommended_additional_tools": contract_tools_override})
 
     # Normalize recommended_bundle to a valid bundle_id from the real catalog.
     # Prompting should keep this valid, but we add this lightweight guardrail so
@@ -342,6 +559,34 @@ def run_repo_to_agent_workflow(
         review_notes.append(normalized_note)
     if tools_filter_note:
         review_notes.append(tools_filter_note)
+
+    # When inspection failed (empty repo, HTTP 409, etc.), surface it clearly so the UI
+    # does not present the fallback draft as if it came from the repo.
+    if not discovered_repo_tools and not scout_output.important_files:
+        summary_lower = (scout_output.repo_summary or "").lower()
+        if "could not inspect" in summary_lower or "inspection error" in summary_lower or "no accessible" in summary_lower:
+            review_notes.append(
+                "Repository inspection failed (e.g. empty repo or HTTP 409). Using default draft. "
+                "Add files and commit to the repo to enable full inspection."
+            )
+
+    # Tool tracking: summary of what each stage produced (for debugging backend vs frontend)
+    _debug_log(
+        hypothesis_id="H7",
+        location="app/repo_to_agent/workflow.py:tool_tracking_pipeline",
+        message="Tool tracking pipeline summary",
+        data={
+            "stage": "final_result",
+            "scout_important_files": scout_output.important_files[:25],
+            "architect_key_paths": architect_output.key_paths[:25],
+            "manifest_tools": [t.name for t in manifest_tools],
+            "code_tools": [t.name for t in code_tools],
+            "discovered_repo_tools": [t.name for t in discovered_repo_tools],
+            "wrapped_repo_tools": [t.name for t in wrapped_repo_tools],
+            "recommended_bundle": draft_output.recommended_bundle,
+            "recommended_additional_tools": draft_output.recommended_additional_tools,
+        },
+    )
     return RepoToAgentResult(
         repo_summary=scout_output.repo_summary,
         architecture=architect_output,

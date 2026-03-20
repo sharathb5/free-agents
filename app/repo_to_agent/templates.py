@@ -322,7 +322,7 @@ REPO_TOOL_DISCOVERY_TEMPLATE = AgentTemplate(
     prompt="(Internal step: no prompt; runner executes rule-based discovery.)",
     input_schema=REPO_TOOL_DISCOVERY_INPUT_SCHEMA,
     output_schema=REPO_TOOL_DISCOVERY_OUTPUT_SCHEMA,
-    allowed_tools=[],
+    allowed_tools=["github_repo_read"],
 )
 
 
@@ -356,7 +356,7 @@ CODE_TOOL_DISCOVERY_TEMPLATE = AgentTemplate(
     prompt="(Internal step: no prompt; runner executes rule-based code pattern detection.)",
     input_schema=REPO_TOOL_DISCOVERY_INPUT_SCHEMA,
     output_schema=CODE_TOOL_DISCOVERY_OUTPUT_SCHEMA,
-    allowed_tools=[],
+    allowed_tools=["github_repo_read"],
 )
 
 

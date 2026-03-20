@@ -71,6 +71,28 @@ def _print_section(title: str) -> None:
     print("-" * len(title))
 
 
+def _bundle_posture_framing(bundle_id: str | None) -> str:
+    """
+    Intentional one-line framing for demo/validation output so multiple repos
+    landing on the same bundle reads deliberate, not accidental.
+    """
+    bid = (bundle_id or "").strip()
+    if bid == "repo_to_agent":
+        return (
+            "Bundle posture: inspection-first default for repos where reading structure/code "
+            "is the most useful starting posture."
+        )
+    if bid == "github_reader":
+        return "Bundle posture: lighter-weight read-only posture."
+    if bid == "no_tools_writer":
+        return "Bundle posture: no-tool explanatory posture."
+    if bid == "research_basic":
+        return "Bundle posture: web/research-oriented (HTTP) when sources matter more than repo inspection."
+    if bid == "data_analysis":
+        return "Bundle posture: data/analysis-oriented (catalog-defined)."
+    return f"Bundle posture: see catalog for bundle_id={bid!r}."
+
+
 def _print_repo_result(owner: str, repo: str, result: Any) -> None:
     print("\n" + "=" * 48)
     print(f"Repo: {owner}/{repo}")
@@ -101,6 +123,7 @@ def _print_repo_result(owner: str, repo: str, result: Any) -> None:
     # AGENT DESIGN
     _print_section("AGENT DESIGN")
     print("recommended_bundle:", result.recommended_bundle)
+    print(_bundle_posture_framing(getattr(result, "recommended_bundle", None)))
     print("recommended_additional_tools:", result.recommended_additional_tools)
     print()
 
@@ -157,6 +180,10 @@ def _print_repo_result(owner: str, repo: str, result: Any) -> None:
 
     # EVAL CASES
     _print_section("EVAL CASES")
+    print(
+        "Note: starter_eval_cases are minimal in the deterministic V1 path "
+        "(satisfy validation; richer cases come from LLM-backed runs)."
+    )
     for case in result.starter_eval_cases:
         print(case)
     print()

@@ -3,6 +3,13 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from app.recommendations.layered_mapping import (
+    detect_signals_from_agent_text,
+    infer_capabilities_from_agent_text,
+    infer_execution_types_from_capabilities,
+    recommend_bundles_and_tools,
+)
+
 from pydantic import BaseModel, Field
 
 
@@ -53,6 +60,10 @@ class RecommendationDebug(BaseModel):
     """Optional debug info for recommendations."""
 
     intents: Dict[str, bool] = Field(default_factory=dict)
+    # Layered deterministic debug.
+    detected_signals: Dict[str, List[str]] = Field(default_factory=dict)
+    inferred_capabilities: Dict[str, ScoreDetails] = Field(default_factory=dict)
+    inferred_execution_types: Dict[str, ScoreDetails] = Field(default_factory=dict)
     bundle_scores: Dict[str, ScoreDetails] = Field(default_factory=dict)
     tool_scores: Dict[str, ScoreDetails] = Field(default_factory=dict)
 
@@ -234,100 +245,84 @@ def recommend_tools_for_agent(
     available_tools: List[CatalogTool],
     available_bundles: List[CatalogBundle],
 ) -> RecommendationResult:
-    """Deterministic heuristic recommendation over catalog bundles and tools."""
+    """Deterministic recommendation over catalog bundles and tools (layered pipeline)."""
 
     primitive_norm = _normalize_text(agent_input.primitive)
     agent = agent_input.model_copy(update={"primitive": primitive_norm})
     extracted_ids = sorted({tid for tid in agent.extracted_tool_ids if isinstance(tid, str) and tid.strip()})
 
+    # Keep legacy intent booleans for backwards-friendly debug.
     intents = _infer_intents(agent)
 
-    bundle_scores: Dict[str, ScoreDetails] = {}
-    for b in available_bundles:
-        details = _score_bundle(b, intents, agent, extracted_ids)
-        bundle_scores[b.bundle_id] = details
+    detected_signals = detect_signals_from_agent_text(agent)
+    capabilities = infer_capabilities_from_agent_text(agent)
+    execution_types = infer_execution_types_from_capabilities(capabilities)
 
-    tool_scores: Dict[str, ScoreDetails] = {}
-    for t in available_tools:
-        details = _score_tool(t, intents, extracted_ids)
-        tool_scores[t.tool_id] = details
-
-    chosen_bundle_id: Optional[str] = None
-    best_score = 0.0
-    for bundle_id in BUNDLE_PRIORITY:
-        if bundle_id in bundle_scores:
-            details = bundle_scores[bundle_id]
-            if details.score > best_score:
-                best_score = details.score
-                chosen_bundle_id = bundle_id
-
-    if chosen_bundle_id is None:
-        for b in available_bundles:
-            details = bundle_scores[b.bundle_id]
-            if details.score > best_score:
-                best_score = details.score
-                chosen_bundle_id = b.bundle_id
-
-    BUNDLE_THRESHOLD = 1.0
-    if chosen_bundle_id is not None and bundle_scores[chosen_bundle_id].score < BUNDLE_THRESHOLD:
-        chosen_bundle_id = None
-
-    sorted_tools = sorted(
-        available_tools,
-        key=lambda t: (-tool_scores.get(t.tool_id, ScoreDetails()).score, t.tool_id),
+    rec = recommend_bundles_and_tools(
+        detected_signals=detected_signals,
+        capabilities=capabilities,
+        execution_types=execution_types,
+        available_tools=available_tools,
+        available_bundles=available_bundles,
+        extracted_tool_ids=extracted_ids,
+        max_additional_tools=MAX_ADDITIONAL_TOOLS,
     )
-    additional_tool_ids: List[str] = []
-    TOOL_THRESHOLD = 1.0
-    chosen_bundle_tools: List[str] = []
-    if chosen_bundle_id is not None:
-        for b in available_bundles:
-            if b.bundle_id == chosen_bundle_id:
-                chosen_bundle_tools = b.tools
-                break
 
-    for t in sorted_tools:
-        if len(additional_tool_ids) >= MAX_ADDITIONAL_TOOLS:
-            break
-        if t.tool_id in chosen_bundle_tools:
+    layered_debug: Dict[str, Any] = rec.get("debug") or {}
+
+    raw_bundle_scores: Dict[str, Any] = layered_debug.get("bundle_scores") or {}
+    bundle_scores: Dict[str, ScoreDetails] = {}
+    for bid, details in raw_bundle_scores.items():
+        if not isinstance(details, dict):
             continue
-        details = tool_scores.get(t.tool_id)
-        if details is None or details.score < TOOL_THRESHOLD:
-            continue
-        additional_tool_ids.append(t.tool_id)
-
-    rationale: List[str] = []
-    if intents.get("filesystem", False):
-        rationale.append("Detected filesystem/search intent from agent description or prompt.")
-    if intents.get("github", False):
-        rationale.append("Detected GitHub/repo automation intent from agent description or prompt.")
-    if intents.get("summarizer_transform", False):
-        rationale.append("Detected transform summarization intent; avoiding heavy tool bundles by default.")
-
-    if chosen_bundle_id is not None:
-        rationale.append(f"Selected bundle '{chosen_bundle_id}' based on highest score and inferred intents.")
-    else:
-        rationale.append("No bundle exceeded minimum score; not recommending a bundle.")
-
-    if additional_tool_ids:
-        rationale.append(
-            f"Selected additional tools based on category/description alignment and extracted tools: {', '.join(additional_tool_ids)}."
+        bundle_scores[bid] = ScoreDetails(
+            score=float(details.get("score") or 0.0),
+            signals=[str(s) for s in (details.get("signals") or []) if str(s).strip()],
         )
-    else:
-        rationale.append("No additional tools strongly matched the agent intent.")
 
-    if not any(intents.values()):
-        rationale.append("Overall match strength is low; recommendations are conservative.")
+    raw_tool_scores: Dict[str, Any] = layered_debug.get("tool_scores") or {}
+    tool_scores: Dict[str, ScoreDetails] = {}
+    for tid, details in raw_tool_scores.items():
+        if not isinstance(details, dict):
+            continue
+        tool_scores[tid] = ScoreDetails(
+            score=float(details.get("score") or 0.0),
+            signals=[str(s) for s in (details.get("signals") or []) if str(s).strip()],
+        )
+
+    raw_caps: Dict[str, Any] = layered_debug.get("inferred_capabilities") or {}
+    inferred_capabilities: Dict[str, ScoreDetails] = {}
+    for cap_name, details in raw_caps.items():
+        if not isinstance(details, dict):
+            continue
+        inferred_capabilities[cap_name] = ScoreDetails(
+            score=float(details.get("score") or 0.0),
+            signals=[str(s) for s in (details.get("evidence") or []) if str(s).strip()],
+        )
+
+    raw_exec: Dict[str, Any] = layered_debug.get("inferred_execution_types") or {}
+    inferred_execution_types: Dict[str, ScoreDetails] = {}
+    for et_name, details in raw_exec.items():
+        if not isinstance(details, dict):
+            continue
+        inferred_execution_types[et_name] = ScoreDetails(
+            score=float(details.get("score") or 0.0),
+            signals=[str(s) for s in (details.get("evidence") or []) if str(s).strip()],
+        )
 
     debug = RecommendationDebug(
         intents=intents,
+        detected_signals=detected_signals,
+        inferred_capabilities=inferred_capabilities,
+        inferred_execution_types=inferred_execution_types,
         bundle_scores=bundle_scores,
         tool_scores=tool_scores,
     )
 
     return RecommendationResult(
-        bundle_id=chosen_bundle_id,
-        additional_tool_ids=additional_tool_ids,
-        rationale=rationale,
+        bundle_id=rec.get("bundle_id"),
+        additional_tool_ids=[str(t) for t in (rec.get("additional_tool_ids") or [])],
+        rationale=rec.get("rationale") or [],
         debug=debug,
     )
 

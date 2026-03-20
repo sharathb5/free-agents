@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -18,6 +19,9 @@ from typing import Any, Dict, List, Optional
 from app.storage.db import connect, is_postgres, sql
 
 logger = logging.getLogger("agent-gateway")
+
+_run_db_initialized = False
+_run_db_init_lock = threading.Lock()
 
 
 def _ensure_sqlite_dir() -> None:
@@ -177,7 +181,25 @@ def _ensure_runs_columns(conn: Any) -> None:
 def init_run_db() -> None:
     """
     Create runs and run_steps tables and indexes. Call at app startup or before first use.
+    For Postgres, runs DDL only once per process to avoid deadlocks when concurrent
+    requests re-run ALTER TABLE in different lock orders. SQLite always runs init
+    (tests may use different db paths).
     """
+    global _run_db_initialized
+    if is_postgres() and _run_db_initialized:
+        return
+    if is_postgres():
+        with _run_db_init_lock:
+            if _run_db_initialized:
+                return
+            _do_init_run_db()
+            _run_db_initialized = True
+    else:
+        _do_init_run_db()
+
+
+def _do_init_run_db() -> None:
+    """Actual DDL; called by init_run_db()."""
     _ensure_sqlite_dir()
     with connect() as conn:
         if not is_postgres():
@@ -204,7 +226,6 @@ def create_run(
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     input_text = json.dumps(input_json, sort_keys=True, default=str)
     with connect() as conn:
-        _ensure_runs_columns(conn)
         conn.execute(
             sql(
                 """
@@ -318,7 +339,6 @@ def append_run_step(
     tool_args_text = json.dumps(tool_args_json, sort_keys=True, default=str) if tool_args_json is not None else None
     tool_result_text = json.dumps(tool_result_json, sort_keys=True, default=str) if tool_result_json is not None else None
     with connect() as conn:
-        _ensure_run_steps_columns(conn)
         conn.execute(
             sql(
                 """

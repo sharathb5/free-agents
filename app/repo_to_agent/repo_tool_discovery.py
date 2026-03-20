@@ -30,7 +30,7 @@ OPENAPI_SPEC_NAMES = ("openapi.yaml", "openapi.json", "openapi.yml", "swagger.ya
 MCP_CONFIG_NAME = "mcp.json"
 PACKAGE_JSON_NAME = "package.json"
 PYPROJECT_NAME = "pyproject.toml"
-CLI_FOLDERS = ("bin", "scripts", "cli", "tools")
+CLI_FOLDERS = ("bin", "scripts", "cli", "tools", "tasks", "automation", "examples")
 MAKEFILE_NAMES = ("Makefile", "makefile", "GNUmakefile")
 DOCKER_SPEC_NAMES = (
     "Dockerfile",
@@ -88,10 +88,78 @@ def get_paths_to_inspect_for_tools(
         file_paths_set.add(name)
     for name in DOCKER_SPEC_NAMES:
         file_paths_set.add(name)
+    file_paths_set.add("agent.json")
     file_paths = sorted(file_paths_set)
 
-    folder_paths = list(CLI_FOLDERS)
+    # Always inspect root plus common CLI/script folders. Keep this list tight to avoid
+    # tool explosion; deeper coverage is handled by code_tool_discovery.
+    folder_paths = [""] + list(CLI_FOLDERS) + ["tasks", "automation", "examples"]
     return file_paths, folder_paths
+
+
+def _detect_tools_dir_json(content: str, source_path: str) -> List[DiscoveredRepoTool]:
+    """Parse tools/*.json tool definition files (name, description, etc.)."""
+    tools: List[DiscoveredRepoTool] = []
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return tools
+    if not isinstance(data, dict):
+        return tools
+    name = data.get("name") or data.get("id") or ""
+    if isinstance(name, str) and name.strip():
+        pass
+    else:
+        base = source_path.split("/")[-1].replace(".json", "")
+        name = base.replace("-", "_").replace(" ", "_") or "tool"
+    desc = data.get("description") or ""
+    if isinstance(desc, str):
+        desc = desc.strip()
+    tools.append(
+        DiscoveredRepoTool(
+            name=name.strip() if isinstance(name, str) else str(name),
+            tool_type="tool_definition",
+            description=desc or f"Tool from {source_path}",
+            source_path=source_path,
+            confidence=0.95,
+        )
+    )
+    return tools
+
+
+def _detect_agent_json_capabilities(content: str) -> List[DiscoveredRepoTool]:
+    """Extract capabilities and likely_tools from agent.json."""
+    tools: List[DiscoveredRepoTool] = []
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return tools
+    if not isinstance(data, dict):
+        return tools
+    seen: set = set()
+    for key in ("capabilities", "likely_tools"):
+        vals = data.get(key)
+        if not isinstance(vals, list):
+            continue
+        for v in vals:
+            if not isinstance(v, str) or not v.strip():
+                continue
+            name = v.strip()
+            if "." in name:
+                name = name.split(".")[-1]
+            name = name.replace("-", "_").replace(" ", "_")
+            if name and name not in seen:
+                seen.add(name)
+                tools.append(
+                    DiscoveredRepoTool(
+                        name=name,
+                        tool_type="capability" if key == "capabilities" else "likely_tool",
+                        description=f"From agent.json {key}",
+                        source_path="agent.json",
+                        confidence=0.9,
+                    )
+                )
+    return tools
 
 
 def _detect_pyproject_scripts(content: str, source_path: str) -> List[DiscoveredRepoTool]:
@@ -243,6 +311,8 @@ def _detect_python_scripts_in_folders(entries: List[Dict[str, Any]], folder_path
         base = path.split("/")[-1]
         if not base or base.startswith("."):
             continue
+        if base == "__init__.py":
+            continue
         tools.append(
             DiscoveredRepoTool(
                 name=base.replace(".py", "").replace("-", "_"),
@@ -274,6 +344,8 @@ def _detect_python_scripts_with_content(file_contents: Dict[str, str]) -> List[D
         if not (has_main or has_shebang):
             continue
         base = path.split("/")[-1]
+        if base == "__init__.py":
+            continue
         name = base.replace(".py", "").replace("-", "_")
         tools.append(
             DiscoveredRepoTool(
@@ -291,7 +363,21 @@ def _detect_python_scripts_with_content(file_contents: Dict[str, str]) -> List[D
 def _detect_cli_folder_entries(entries: List[Dict[str, Any]], folder_path: str) -> List[DiscoveredRepoTool]:
     """Detect executable-looking files in bin/, scripts/, cli/, tools/ (.py, .sh, .bash, .js, etc.)."""
     tools: List[DiscoveredRepoTool] = []
-    exec_extensions = (".py", ".sh", ".bash", "", ".js", ".mjs", ".cjs")
+    exec_extensions = (".py", ".sh", ".bash", ".js", ".mjs", ".cjs")
+    ignore_basenames = {
+        "readme",
+        "readme.md",
+        "license",
+        "license.md",
+        "copying",
+        "notice",
+        "changelog",
+        "changelog.md",
+        "contributing",
+        "contributing.md",
+        "code_of_conduct",
+        "code_of_conduct.md",
+    }
     for e in entries:
         path = (e.get("path") or e.get("name") or "").strip()
         if not path:
@@ -302,10 +388,20 @@ def _detect_cli_folder_entries(entries: List[Dict[str, Any]], folder_path: str) 
         base = path.split("/")[-1]
         if not base or base.startswith("."):
             continue
+        base_lower = base.lower()
+        # Ignore common non-executable repo docs/metadata files.
+        if base_lower in ignore_basenames:
+            continue
         # .py handled by _detect_python_scripts_in_folders and _detect_python_scripts_with_content
         if base.endswith(".py"):
             continue
-        if any(base.endswith(ext) or (ext == "" and "." not in base) for ext in exec_extensions):
+        # tools/*.json are tool definitions, not scripts
+        if folder_path == "tools" and base.endswith(".json"):
+            continue
+        # Match known script extensions only.
+        # Do NOT treat extensionless files as executables unless we can confirm a shebang,
+        # because repo listings don't reliably provide executable permission bits.
+        if any(base_lower.endswith(ext) for ext in exec_extensions):
             tool_type = "script"
             tools.append(
                 DiscoveredRepoTool(
@@ -393,6 +489,18 @@ def discover_tools_from_repo(
     # 4d. Python scripts with __main__ or shebang (from file content)
     for t in _detect_python_scripts_with_content(file_contents):
         add(t)
+
+    # 4e. tools/*.json (tool definition files)
+    for path, content in file_contents.items():
+        if "/" in path and path.startswith("tools/") and path.lower().endswith(".json") and content.strip():
+            for t in _detect_tools_dir_json(content, path):
+                add(t)
+
+    # 4f. agent.json capabilities and likely_tools
+    agent_content = file_contents.get("agent.json") or ""
+    if agent_content.strip():
+        for t in _detect_agent_json_capabilities(agent_content):
+            add(t)
 
     # 5. bin/ scripts/ cli/ tools/ (shell scripts, js, etc.; .py via _detect_python_scripts_in_folders)
     for folder_path, entries in folder_listings.items():

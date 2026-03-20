@@ -11,6 +11,7 @@ interface DetailsStepProps {
   onChange: (draft: UploadAgentDraft) => void
   mode: "build" | "github"
   helperText?: string
+  reviewNotes?: string[]
 }
 
 function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
@@ -48,7 +49,7 @@ function Field({
   )
 }
 
-export function DetailsStep({ draft, onChange, mode, helperText }: DetailsStepProps) {
+export function DetailsStep({ draft, onChange, mode, helperText, reviewNotes }: DetailsStepProps) {
   const [advancedOpen, setAdvancedOpen] = React.useState(false)
   const [tagsText, setTagsText] = React.useState(draft.tags.join(", "))
   const [inputSchemaText, setInputSchemaText] = React.useState(JSON.stringify(draft.input_schema, null, 2))
@@ -90,8 +91,17 @@ export function DetailsStep({ draft, onChange, mode, helperText }: DetailsStepPr
     }
   }
 
+  const inspectionFailedNote = mode === "github" && reviewNotes?.some(
+    (n) => n.toLowerCase().includes("inspection failed") || n.toLowerCase().includes("empty repo")
+  )
+
   return (
     <div className="grid gap-6">
+      {inspectionFailedNote && (
+        <div className="rounded-2xl border border-amber-400/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <strong>Repository inspection failed.</strong> The draft below uses defaults because the repo could not be inspected (e.g. empty repo or HTTP 409). Add files and commit to the repo, then re-import to get a draft based on actual repo contents.
+        </div>
+      )}
       <div className="rounded-[28px] border border-rock-blue/16 bg-pampas/[0.045] p-6 shadow-[0_36px_90px_-70px_rgba(171,172,90,0.3)]">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
@@ -127,6 +137,7 @@ export function DetailsStep({ draft, onChange, mode, helperText }: DetailsStepPr
             <option value="transform">transform</option>
             <option value="extract">extract</option>
             <option value="classify">classify</option>
+            <option value="structured_agent">structured_agent</option>
           </select>
         </Field>
       </div>

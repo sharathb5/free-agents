@@ -22,6 +22,30 @@ logger = logging.getLogger("agent-gateway")
 
 router = APIRouter(prefix="/repo-to-agent", tags=["repo-to-agent"])
 
+_DEBUG_LOG_PATH = "/Users/sharath/agent-toolbox/agent-toolbox/.cursor/debug-db76a9.log"
+
+
+def _debug_log(*, hypothesis_id: str, location: str, message: str, data: Dict[str, Any] | None = None, run_id: str = "pre-fix") -> None:
+    # #region agent log
+    try:
+        import json as _json
+        import time as _time
+
+        payload: Dict[str, Any] = {
+            "sessionId": "db76a9",
+            "timestamp": int(_time.time() * 1000),
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data or {},
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion agent log
+
 
 def _agents_error(status_code: int, code: str, message: str, details: list | None = None) -> JSONResponse:
     return JSONResponse(
@@ -67,6 +91,18 @@ async def create_repo_to_agent_run(request: Request) -> JSONResponse:
             f"execution_backend must be 'openai' or 'internal', got {execution_backend!r}",
         )
 
+    _debug_log(
+        hypothesis_id="H4",
+        location="app/routers/repo_to_agent.py:create_repo_to_agent_run",
+        message="Received repo-to-agent request",
+        data={
+            "has_owner": bool(body.get("owner")),
+            "has_repo": bool(body.get("repo")),
+            "has_url": bool(body.get("url")),
+            "execution_backend": execution_backend,
+        },
+    )
+
     run_store.init_run_db()
     run = run_store.create_run(
         agent_id="repo_to_agent",
@@ -81,11 +117,40 @@ async def create_repo_to_agent_run(request: Request) -> JSONResponse:
             repo_input: Dict[str, Any] = {
                 k: v for k, v in body.items() if k in ("owner", "repo", "ref", "url") and v is not None
             }
+            _debug_log(
+                hypothesis_id="H2",
+                location="app/routers/repo_to_agent.py:run_in_background",
+                message="Starting repo-to-agent workflow",
+                data={"run_id": run_id, "execution_backend": execution_backend, "repo_input_keys": sorted(list(repo_input.keys()))},
+            )
             result = run_repo_to_agent(repo_input, execution_backend=execution_backend)
             run_store.set_run_status(run_id, "succeeded", output_json=result.model_dump())
+            discovered = getattr(result, "discovered_repo_tools", None) or []
+            wrapped = getattr(result, "wrapped_repo_tools", None) or []
+            _debug_log(
+                hypothesis_id="H2",
+                location="app/routers/repo_to_agent.py:run_in_background",
+                message="Repo-to-agent workflow succeeded (payload sent to client)",
+                data={
+                    "stage": "api_response",
+                    "run_id": run_id,
+                    "recommended_bundle": getattr(result, "recommended_bundle", None),
+                    "recommended_additional_tools": getattr(result, "recommended_additional_tools", None) or [],
+                    "discovered_repo_tools_count": len(discovered),
+                    "discovered_repo_tools": [{"name": t.name, "tool_type": getattr(t, "tool_type", ""), "source_path": getattr(t, "source_path", "")} for t in discovered],
+                    "wrapped_repo_tools_count": len(wrapped),
+                    "wrapped_repo_tools": [{"name": t.name, "tool_type": getattr(t, "tool_type", "")} for t in wrapped],
+                },
+            )
         except Exception as e:
             logger.exception("repo-to-agent run %s failed", run_id)
             run_store.set_run_status(run_id, "failed", error=str(e))
+            _debug_log(
+                hypothesis_id="H2",
+                location="app/routers/repo_to_agent.py:run_in_background",
+                message="Repo-to-agent workflow failed",
+                data={"run_id": run_id, "error": str(e)},
+            )
 
     thread = threading.Thread(target=run_in_background)
     thread.start()

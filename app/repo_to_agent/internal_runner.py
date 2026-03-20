@@ -37,6 +37,28 @@ from .templates import (
 )
 from .tool_discovery import discover_tools_from_repo
 
+_DEBUG_LOG_PATH = "/Users/sharath/agent-toolbox/agent-toolbox/.cursor/debug-db76a9.log"
+
+
+def _debug_log(*, hypothesis_id: str, location: str, message: str, data: Dict[str, Any] | None = None) -> None:
+    # #region agent log
+    try:
+        import json as _json
+        import time as _time
+        payload: Dict[str, Any] = {
+            "sessionId": "db76a9",
+            "timestamp": int(_time.time() * 1000),
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data or {},
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(_json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion agent log
+
 
 def _template_to_preset(template: AgentTemplate) -> Preset:
     """Build a minimal Preset from an AgentTemplate for run context."""
@@ -125,13 +147,63 @@ def _synthesize_repo_architect(
         base = p.split("/")[-1].lower()
         if base in ("main.py", "app.py", "index.js", "server.py"):
             entrypoints.append(p)
+    # Ensure key structural signals are present even when the tree is large and we truncate.
+    # Some classifiers rely on seeing packaging + module/test structure markers.
+    paths_lower = [p.lower() for p in paths]
+    priority: List[str] = []
+    # Packaging/config files.
+    for fname in ("pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "package.json"):
+        if fname in paths_lower:
+            # Recover original casing/path from `paths` deterministically.
+            priority.append(paths[paths_lower.index(fname)])
+    # Common structure directories.
+    for d in ("src/", "tests/", "test/", "docs/", "examples/"):
+        d_no = d.rstrip("/")
+        if any(p.startswith(d) for p in paths_lower) or any(p == d_no for p in paths_lower):
+            # Keep trailing slash so downstream heuristics match `startswith("tests/")`, etc.
+            priority.append(d)
+    # If there are any package initializers, surface a couple to prove module structure.
+    init_paths = [p for p in paths_lower if p.endswith("/__init__.py") or p.endswith("__init__.py")]
+    for p in init_paths[:5]:
+        priority.append(paths[paths_lower.index(p)])
+    # Also surface package directories (e.g. src/pvlib/) and a couple representative .py files
+    # from src/ and tests/ so library repos aren't misrepresented as "setup.py only".
+    package_dirs: List[str] = []
+    for p in init_paths[:20]:
+        orig = paths[paths_lower.index(p)]
+        if "/__init__.py" in orig.lower():
+            pkg_dir = orig.rsplit("/__init__.py", 1)[0].rstrip("/") + "/"
+            package_dirs.append(pkg_dir)
+    for d in package_dirs[:5]:
+        priority.append(d)
+    src_py = [paths[i] for i, pl in enumerate(paths_lower) if pl.startswith("src/") and pl.endswith(".py")]
+    tests_py = [paths[i] for i, pl in enumerate(paths_lower) if (pl.startswith("tests/") or pl.startswith("test/")) and pl.endswith(".py")]
+    for p in (src_py[:5] + tests_py[:5]):
+        priority.append(p)
+    # Build bounded key_paths with priority items first, then fill with tree paths.
+    key_paths_out: List[str] = []
+    seen: set[str] = set()
+    for p in priority:
+        pp = str(p).strip()
+        if pp and pp not in seen:
+            key_paths_out.append(pp)
+            seen.add(pp)
+    for p in paths:
+        pp = str(p).strip()
+        if pp and pp not in seen:
+            key_paths_out.append(pp)
+            seen.add(pp)
+        if len(key_paths_out) >= 120:
+            break
     return {
         "languages": languages,
         "frameworks": frameworks,
         "services": services,
         "entrypoints": entrypoints[:10],
         "integrations": [],
-        "key_paths": paths[:30],
+        # Keep more paths than the minimal stub; script-heavy repos need broader surface coverage.
+        # Still bounded to avoid huge payloads.
+        "key_paths": key_paths_out,
     }
 
 
@@ -139,16 +211,94 @@ def _stub_agent_designer(input_payload: Dict[str, Any]) -> Dict[str, Any]:
     """Deterministic stub for agent_designer (no tools). Uses repo tool discovery for bundle + tools. TODO: replace with LLM."""
     scout = input_payload.get("scout") or {}
     architecture = input_payload.get("architecture") or {}
-    discovery = discover_tools_from_repo(scout, architecture)
+    discovered_repo_tools = input_payload.get("discovered_repo_tools") or []
+
+    def _paths_from_payload() -> List[str]:
+        paths: List[str] = []
+        if isinstance(scout, dict):
+            paths.extend([str(x) for x in (scout.get("important_files") or []) if str(x).strip()])
+        if isinstance(architecture, dict):
+            paths.extend([str(x) for x in (architecture.get("key_paths") or []) if str(x).strip()])
+            paths.extend([str(x) for x in (architecture.get("entrypoints") or []) if str(x).strip()])
+        return paths
+
+    paths_lower = [p.strip().lower() for p in _paths_from_payload()]
+    has_agent_json = ("agent.json" in paths_lower) or any(
+        isinstance(t, dict) and str(t.get("source_path") or "").strip().lower() == "agent.json"
+        for t in (discovered_repo_tools or [])
+    )
+    has_system_prompt = "prompts/system_prompt.md" in paths_lower
+
+    # SINGLE source of truth: tool discovery computes repo_type using classify_repo_type,
+    # and we use that same result for draft + debug to avoid inconsistencies.
+    discovery = discover_tools_from_repo(
+        scout,
+        architecture,
+        discovered_repo_tools=discovered_repo_tools if isinstance(discovered_repo_tools, list) else None,
+    )
     bundle_id = discovery.get("bundle_id") or "repo_to_agent"
     additional_tools = discovery.get("additional_tools") or []
+    recommendation_debug = discovery.get("debug") or {}
+    repo_type = (
+        recommendation_debug.get("repo_type")
+        if isinstance(recommendation_debug, dict)
+        else None
+    ) or "unknown"
+    repo_type_confidence = (
+        float(recommendation_debug.get("repo_type_confidence") or 0.0)
+        if isinstance(recommendation_debug, dict)
+        else 0.0
+    )
 
     repo_summary = scout.get("repo_summary", "") if isinstance(scout, dict) else getattr(scout, "repo_summary", "")
     name = (str(repo_summary) if repo_summary else "Agent from repo").strip()[:80]
     langs = (architecture.get("languages") if isinstance(architecture, dict) else []) or (scout.get("language_hints", []) if isinstance(scout, dict) else [])
     if not isinstance(langs, list):
         langs = []
-    desc = f"Draft agent for repo. Languages: {', '.join(langs)}" if langs else "Draft agent from repo analysis."
+
+    # Primitive mapping table (deterministic).
+    primitive_by_repo_type = {
+        "explicit_agent": "structured_agent",
+        "agent_framework": "structured_agent",
+        "automation_scripts": "extract",
+        "docs_tutorial": "transform",
+        "library_framework": "classify",
+        "unknown": "transform",
+    }
+    primitive = primitive_by_repo_type.get(repo_type, "transform")
+
+    # Description/prompt should reflect repo purpose (avoid generic fallback tone).
+    langs_txt = f"Languages: {', '.join([str(x) for x in langs if str(x).strip()])}." if langs else ""
+    repo_type_txt = f"Repo type: {repo_type} (confidence={repo_type_confidence:.2f})."
+    if repo_type == "automation_scripts":
+        desc = ("Automation assistant draft for running/utilizing repository scripts and commands. " + langs_txt + " " + repo_type_txt).strip()
+        prompt = (
+            "You are an automation assistant for this repository.\n"
+            "Help the user discover and safely use the repo's scripts/commands and typical workflows.\n"
+            "Prefer explaining what to run and why, and ask for clarification when the desired automation goal is ambiguous.\n"
+        )
+    elif repo_type == "docs_tutorial":
+        desc = ("Documentation/tutorial helper draft for explaining and summarizing repo content. " + langs_txt + " " + repo_type_txt).strip()
+        prompt = (
+            "You are a documentation and tutorial assistant for this repository.\n"
+            "Help the user learn the material, summarize sections, and answer questions based on the repo content.\n"
+        )
+    elif repo_type == "library_framework":
+        desc = ("Library/framework helper draft for understanding APIs, usage patterns, and architecture. " + langs_txt + " " + repo_type_txt).strip()
+        prompt = (
+            "You are a developer assistant for this library/framework repository.\n"
+            "Help the user understand the API surface, common usage, and project structure; propose examples and integration guidance.\n"
+        )
+    elif repo_type in ("explicit_agent", "agent_framework"):
+        desc = ("Agent/system repository draft focused on orchestration, tools, and workflows. " + langs_txt + " " + repo_type_txt).strip()
+        prompt = (
+            "You are an agent designer assistant for this repository.\n"
+            "Help the user understand what the agent system does, how it is structured, and how to extend or operate it.\n"
+        )
+    else:
+        desc = (f"Draft agent for repo. {langs_txt} {repo_type_txt}".strip() if (langs_txt or repo_type_txt) else "Draft agent from repo analysis.")
+        prompt = "You are an agent generated from repo analysis. Follow the user's request."
+
     return {
         "recommended_bundle": bundle_id,
         "recommended_additional_tools": additional_tools,
@@ -157,14 +307,26 @@ def _stub_agent_designer(input_payload: Dict[str, Any]) -> Dict[str, Any]:
             "version": "0.1.0",
             "name": name,
             "description": desc,
-            "primitive": "transform",
+            "primitive": primitive,
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": True},
             "output_schema": {"type": "object", "properties": {}, "additionalProperties": True},
-            "prompt": "You are an agent generated from repo analysis. Follow the user's request.",
+            "prompt": prompt,
+            "recommendation_debug": {
+                **(recommendation_debug if isinstance(recommendation_debug, dict) else {}),
+                # These keys are already included by tool_discovery; keep for stability.
+                "repo_type": repo_type,
+                "repo_type_confidence": repo_type_confidence,
+                "decision_summary": (
+                    f"repo_type={repo_type}; primitive={primitive}; "
+                    f"bundle={bundle_id}; additional_tools={','.join(additional_tools) if additional_tools else 'none'}"
+                ),
+            },
         },
+        # Minimal in the deterministic V1 path: satisfies validation without implying
+        # a full eval suite (LLM-backed designer can supply richer cases).
         "starter_eval_cases": [
             {
-                "name": "placeholder_eval",
+                "name": "minimal_v1_smoke",
                 "input": "Describe what this repo does.",
                 "expected": "A short description of the repository and its purpose.",
             },
@@ -235,7 +397,60 @@ def run_specialist_with_internal_runner(
         run_context = build_run_context(run_id=run_id, preset=preset)
         registry = DefaultToolRegistry()
         overview = _run_github_repo_read(registry, run_context, owner, repo, ref, "overview")
-        tree = _run_github_repo_read(registry, run_context, owner, repo, ref, "tree", path="")
+        top_tree = _run_github_repo_read(registry, run_context, owner, repo, ref, "tree", path="")
+
+        # Improve coverage for library repos by reading tree listings for a few likely
+        # structural directories (still deterministic + bounded).
+        try:
+            top_entries = top_tree.get("entries") or []
+            top_dir_names: List[str] = []
+            for e in top_entries:
+                p = (e.get("path") or "").strip()
+                if not p:
+                    continue
+                first = p.split("/", 1)[0]
+                e_type = str(e.get("type") or "").lower()
+                if e_type in {"tree", "dir", "directory"}:
+                    top_dir_names.append(first)
+            top_dir_set = {d.lower() for d in top_dir_names if d}
+
+            # pvlib-python package dir is `pvlib`; tests dir is `tests`.
+            base_pkg = str(repo).split("-")[0].lower() if repo else ""
+            extra_candidates: List[str] = []
+            if "tests" in top_dir_set:
+                extra_candidates.append("tests")
+            elif "test" in top_dir_set:
+                extra_candidates.append("test")
+            if "src" in top_dir_set:
+                extra_candidates.append("src")
+            if base_pkg and base_pkg in top_dir_set:
+                extra_candidates.append(base_pkg)
+            extra_candidates = extra_candidates[:3]  # hard cap
+
+            merged_entries = list(top_entries)
+            merged_truncated = bool(top_tree.get("truncated"))
+            seen_paths = {e.get("path") for e in merged_entries if e.get("path")}
+            for cand in extra_candidates:
+                try:
+                    sub_tree = _run_github_repo_read(
+                        registry, run_context, owner, repo, ref, "tree", path=cand
+                    )
+                    sub_entries = sub_tree.get("entries") or []
+                    for se in sub_entries:
+                        sp = se.get("path")
+                        if sp and sp not in seen_paths:
+                            merged_entries.append(se)
+                            seen_paths.add(sp)
+                    merged_truncated = merged_truncated or bool(sub_tree.get("truncated"))
+                except Exception:
+                    continue
+
+            tree = dict(top_tree)
+            tree["entries"] = merged_entries
+            tree["truncated"] = merged_truncated
+        except Exception:
+            tree = top_tree
+
         return _synthesize_repo_architect(overview, tree)
 
     if template.id == REPO_TOOL_DISCOVERY_TEMPLATE.id:
@@ -247,6 +462,12 @@ def run_specialist_with_internal_runner(
         if not owner or not repo:
             raise ValueError("repo_tool_discovery input must include owner and repo")
         file_paths, folder_paths = get_paths_to_inspect_for_tools(scout, architecture)
+        _debug_log(
+            hypothesis_id="H7",
+            location="app/repo_to_agent/internal_runner.py:repo_tool_discovery",
+            message="Paths to inspect",
+            data={"stage": "manifest_discovery_input", "file_paths_count": len(file_paths), "file_paths": file_paths[:15], "folder_paths": folder_paths},
+        )
         preset = _template_to_preset(template)
         run_id = f"internal-{uuid.uuid4().hex[:12]}"
         run_context = build_run_context(run_id=run_id, preset=preset)
@@ -266,12 +487,46 @@ def run_specialist_with_internal_runner(
                 out = _run_github_repo_read(registry, run_context, owner, repo, ref, "tree", path=folder)
                 entries = out.get("entries") or []
                 folder_listings[folder] = entries
+                if folder == "tools":
+                    for e in entries:
+                        p = (e.get("path") or e.get("name") or "").strip()
+                        if p and (e.get("type") or "file") == "file" and p.lower().endswith(".json"):
+                            try:
+                                out_f = _run_github_repo_read(registry, run_context, owner, repo, ref, "file", path=p)
+                                content = out_f.get("content") or ""
+                                if isinstance(content, str):
+                                    file_contents[p] = content
+                            except Exception:
+                                pass
             except Exception:
                 pass
+        _debug_log(
+            hypothesis_id="H7",
+            location="app/repo_to_agent/internal_runner.py:repo_tool_discovery",
+            message="Fetched file_contents and folder_listings",
+            data={
+                "stage": "manifest_discovery_fetched",
+                "file_contents_keys": sorted(file_contents.keys()),
+                "folder_listings_keys": sorted(folder_listings.keys()),
+                "tools_entries_count": len(folder_listings.get("tools") or []),
+                "tools_entries_sample": [
+                    {"path": e.get("path"), "type": e.get("type")}
+                    for e in (folder_listings.get("tools") or [])[:8]
+                ],
+                "has_agent_json": "agent.json" in file_contents,
+                "agent_json_len": len(file_contents.get("agent.json") or ""),
+            },
+        )
         discovered = discover_repo_tools_from_repo(
             scout, architecture,
             file_contents=file_contents,
             folder_listings=folder_listings,
+        )
+        _debug_log(
+            hypothesis_id="H7",
+            location="app/repo_to_agent/internal_runner.py:repo_tool_discovery",
+            message="Discovery result",
+            data={"stage": "manifest_discovery_output", "discovered_count": len(discovered), "discovered_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in discovered]},
         )
         return {"discovered_tools": [t.model_dump() for t in discovered]}
 
@@ -284,6 +539,12 @@ def run_specialist_with_internal_runner(
         if not owner or not repo:
             raise ValueError("code_tool_discovery input must include owner and repo")
         code_paths = get_paths_to_inspect_for_code_tools(scout, architecture)
+        _debug_log(
+            hypothesis_id="H7",
+            location="app/repo_to_agent/internal_runner.py:code_tool_discovery",
+            message="Code paths to inspect",
+            data={"stage": "code_discovery_input", "code_paths_count": len(code_paths), "code_paths": code_paths[:20]},
+        )
         file_contents: Dict[str, str] = {}
         preset = _template_to_preset(template)
         run_id = f"internal-{uuid.uuid4().hex[:12]}"
@@ -298,6 +559,12 @@ def run_specialist_with_internal_runner(
             except Exception:
                 pass
         code_tools = discover_code_defined_tools(scout, architecture, file_contents=file_contents)
+        _debug_log(
+            hypothesis_id="H7",
+            location="app/repo_to_agent/internal_runner.py:code_tool_discovery",
+            message="Code discovery result",
+            data={"stage": "code_discovery_output", "code_tools_count": len(code_tools), "code_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in code_tools]},
+        )
         return {"code_tools": [t.model_dump() for t in code_tools]}
 
     if template.id == AGENT_DESIGNER_TEMPLATE.id:

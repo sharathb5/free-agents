@@ -22,6 +22,7 @@ from .examples import get_example
 from .routers import agents as agents_router
 from .routers import catalog as catalog_router
 from .routers import evals as evals_router
+from .routers import github as github_router
 from .routers import repo_to_agent as repo_to_agent_router
 from .routers import runs as runs_router
 from .routers import sessions as sessions_router
@@ -66,6 +67,7 @@ app.add_middleware(
 app.include_router(agents_router.router)
 app.include_router(catalog_router.router)
 app.include_router(evals_router.router)
+app.include_router(github_router.router)
 app.include_router(repo_to_agent_router.router)
 app.include_router(runs_router.router)
 app.include_router(sessions_router.router)

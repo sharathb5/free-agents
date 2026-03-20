@@ -35,6 +35,7 @@ const primitiveColors: Record<string, string> = {
   transform: "bg-blue-bayoux/18 text-pampas border-rock-blue/20",
   extract: "bg-rock-blue/16 text-pampas border-rock-blue/20",
   classify: "bg-pampas/8 text-pampas border-rock-blue/20",
+  structured_agent: "bg-blue-bayoux/18 text-pampas border-rock-blue/20",
 }
 
 export function AgentDetailModal({
