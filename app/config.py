@@ -6,12 +6,22 @@ from typing import List, Optional
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-# Load .env from the directory you run agent-toolbox from. override=True so that
-# .env wins over any PROVIDER/API keys already set in the shell (e.g. in .zshrc).
-_load_env_path = Path.cwd() / ".env"
+# Load .env from the repository root (parent of the `app` package) first so uvicorn
+# picks up the same file no matter which directory you start from. Then optionally
+# load cwd .env if it is a different file (local overrides). override=True so values
+# from these files win over pre-set shell variables (e.g. .zshrc).
+_repo_root = Path(__file__).resolve().parent.parent
 _disable_dotenv = os.getenv("AGENT_TOOLBOX_DISABLE_DOTENV", "").strip().lower() in ("1", "true", "yes")
 if not _disable_dotenv:
-    load_dotenv(dotenv_path=_load_env_path, override=True)
+    _env_candidates = [_repo_root / ".env", Path.cwd() / ".env"]
+    _seen: set[Path] = set()
+    for _p in _env_candidates:
+        _rp = _p.resolve()
+        if _rp in _seen:
+            continue
+        _seen.add(_rp)
+        if _p.is_file():
+            load_dotenv(dotenv_path=_p, override=True)
 
 
 class Settings(BaseModel):
@@ -25,9 +35,14 @@ class Settings(BaseModel):
     clerk_issuer: Optional[str]
     clerk_audience: Optional[str]
     clerk_authorized_parties: List[str]
+    clerk_secret_key: Optional[str]
+    clerk_api_url: str = "https://api.clerk.com"
     github_client_id: Optional[str]
     github_client_secret: Optional[str]
     github_oauth_redirect_uri: Optional[str]
+    # Extra allowed postMessage targets for GitHub OAuth popup (comma-separated origins).
+    # Localhost is always allowed. Non-localhost also allowed when listed in CORS_ORIGINS (if not *).
+    github_oauth_allowed_return_origins: List[str] = []
     db_path: str = "./data/gateway.db"
     session_db_path: str = "./data/sessions.db"
     cors_origins: str = "*"
@@ -75,9 +90,12 @@ def _base_settings() -> Settings:
         clerk_issuer=None,
         clerk_audience=None,
         clerk_authorized_parties=[],
+        clerk_secret_key=None,
+        clerk_api_url="https://api.clerk.com",
         github_client_id=None,
         github_client_secret=None,
         github_oauth_redirect_uri=None,
+        github_oauth_allowed_return_origins=[],
         db_path="./data/gateway.db",
         session_db_path="./data/sessions.db",
         cors_origins="*",
@@ -107,15 +125,25 @@ def get_settings() -> Settings:
     auth_token = os.getenv("AUTH_TOKEN") or None
     clerk_jwks_url = os.getenv("CLERK_JWKS_URL") or None
     clerk_jwt_key = os.getenv("CLERK_JWT_KEY") or None
-    clerk_issuer = os.getenv("CLERK_ISSUER") or None
-    clerk_audience = os.getenv("CLERK_AUDIENCE") or None
+    _raw_issuer = (os.getenv("CLERK_ISSUER") or "").strip()
+    # JWT iss is usually https://xxx.clerk.accounts.dev (no trailing slash).
+    clerk_issuer = _raw_issuer.rstrip("/") or None
+    clerk_audience = (os.getenv("CLERK_AUDIENCE") or "").strip() or None
     clerk_authorized_parties_raw = os.getenv("CLERK_AUTHORIZED_PARTIES") or ""
     clerk_authorized_parties = [
         part.strip() for part in clerk_authorized_parties_raw.split(",") if part.strip()
     ]
-    github_client_id = os.getenv("GITHUB_CLIENT_ID") or None
-    github_client_secret = os.getenv("GITHUB_CLIENT_SECRET") or None
-    github_oauth_redirect_uri = os.getenv("GITHUB_OAUTH_REDIRECT_URI") or None
+    clerk_secret_key = os.getenv("CLERK_SECRET_KEY") or None
+    clerk_api_url = os.getenv("CLERK_API_URL") or base.clerk_api_url
+    github_client_id = (os.getenv("GITHUB_CLIENT_ID") or "").strip() or None
+    github_client_secret = (os.getenv("GITHUB_CLIENT_SECRET") or "").strip() or None
+    # GitHub matches redirect_uri byte-for-byte; trailing slash mismatch breaks OAuth.
+    _raw_redirect = (os.getenv("GITHUB_OAUTH_REDIRECT_URI") or "").strip()
+    github_oauth_redirect_uri = _raw_redirect.rstrip("/") or None
+    _gh_return_raw = os.getenv("GITHUB_OAUTH_ALLOWED_RETURN_ORIGINS", "")
+    github_oauth_allowed_return_origins = [
+        x.strip() for x in _gh_return_raw.split(",") if x.strip()
+    ]
     provider_name = (os.getenv("PROVIDER") or base.provider_name).lower()
     agent_preset = os.getenv("AGENT_PRESET") or base.agent_preset
 
@@ -144,9 +172,12 @@ def get_settings() -> Settings:
         clerk_issuer=clerk_issuer,
         clerk_audience=clerk_audience,
         clerk_authorized_parties=clerk_authorized_parties,
+        clerk_secret_key=clerk_secret_key,
+        clerk_api_url=clerk_api_url,
         github_client_id=github_client_id,
         github_client_secret=github_client_secret,
         github_oauth_redirect_uri=github_oauth_redirect_uri,
+        github_oauth_allowed_return_origins=github_oauth_allowed_return_origins,
         db_path=db_path,
         session_db_path=session_db_path,
         cors_origins=cors_origins,

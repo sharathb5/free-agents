@@ -8,6 +8,7 @@ Deterministic/minimal backend with TODOs for real reasoning (LLM) integration.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any, Dict, List
 
@@ -36,6 +37,8 @@ from .templates import (
     AgentTemplate,
 )
 from .tool_discovery import discover_tools_from_repo
+
+_log = logging.getLogger(__name__)
 
 _DEBUG_LOG_PATH = "/Users/sharath/agent-toolbox/agent-toolbox/.cursor/debug-db76a9.log"
 
@@ -269,7 +272,13 @@ def _stub_agent_designer(input_payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # Description/prompt should reflect repo purpose (avoid generic fallback tone).
     langs_txt = f"Languages: {', '.join([str(x) for x in langs if str(x).strip()])}." if langs else ""
-    repo_type_txt = f"Repo type: {repo_type} (confidence={repo_type_confidence:.2f})."
+    _log.info(
+        "internal_runner draft synthesis repo_type=%s confidence=%.2f bundle_id=%s",
+        repo_type,
+        repo_type_confidence,
+        bundle_id,
+    )
+    repo_type_txt = f"Repo type: {repo_type}."
     if repo_type == "automation_scripts":
         desc = ("Automation assistant draft for running/utilizing repository scripts and commands. " + langs_txt + " " + repo_type_txt).strip()
         prompt = (
@@ -312,10 +321,12 @@ def _stub_agent_designer(input_payload: Dict[str, Any]) -> Dict[str, Any]:
             "output_schema": {"type": "object", "properties": {}, "additionalProperties": True},
             "prompt": prompt,
             "recommendation_debug": {
-                **(recommendation_debug if isinstance(recommendation_debug, dict) else {}),
-                # These keys are already included by tool_discovery; keep for stability.
+                **{
+                    k: v
+                    for k, v in (recommendation_debug if isinstance(recommendation_debug, dict) else {}).items()
+                    if k != "repo_type_confidence"
+                },
                 "repo_type": repo_type,
-                "repo_type_confidence": repo_type_confidence,
                 "decision_summary": (
                     f"repo_type={repo_type}; primitive={primitive}; "
                     f"bundle={bundle_id}; additional_tools={','.join(additional_tools) if additional_tools else 'none'}"

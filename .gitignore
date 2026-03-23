@@ -7,8 +7,10 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+# Environment and secrets (never commit)
 .env
 .env.*
+.envfrontend
 .DS_Store
 
 # Build artifacts (pip install / python -m build)

@@ -262,12 +262,12 @@ def test_get_catalog_tools_stable_ordering(client) -> None:
 
 
 def test_post_catalog_recommend_returns_bundle(client) -> None:
-    """POST /catalog/recommend with agent_idea returns bundle_id, confidence, rationale."""
+    """POST /catalog/recommend returns bundle_id and rationale; confidence is server-log only."""
     resp = client.post("/catalog/recommend", json={"agent_idea": "Research web articles"})
     assert resp.status_code == 200
     data = resp.json()
     assert "bundle_id" in data
-    assert "confidence" in data
+    assert "confidence" not in data
     assert "rationale" in data
     assert "suggested_additional_tools" in data
     assert data["bundle_id"] == "research_basic"

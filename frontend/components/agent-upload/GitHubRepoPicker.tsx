@@ -10,6 +10,8 @@ interface GitHubRepoPickerProps {
   repos: GitHubRepoSummary[]
   isLoading: boolean
   error?: string
+  /** Shown in the empty list (e.g. server connection.message from /github/repos). */
+  emptyStateHint?: string
   selectedRepo?: GitHubRepoSummary | null
   onSelectRepo: (repo: GitHubRepoSummary) => void
   onRefresh?: () => void
@@ -19,6 +21,7 @@ export function GitHubRepoPicker({
   repos,
   isLoading,
   error,
+  emptyStateHint,
   selectedRepo,
   onSelectRepo,
   onRefresh,
@@ -41,7 +44,7 @@ export function GitHubRepoPicker({
         <div>
           <p className="text-sm font-semibold text-pampas">Repository picker</p>
           <p className="mt-1 text-sm text-pampas/54">
-            Future OAuth wiring will populate this list from the signed-in GitHub account.
+            This list is loaded from the GitHub account connected to this app.
           </p>
         </div>
         {onRefresh && (
@@ -107,9 +110,17 @@ export function GitHubRepoPicker({
 
         {!isLoading && filteredRepos.length === 0 && (
           <div className="rounded-2xl border border-dashed border-rock-blue/14 bg-pampas/[0.03] px-4 py-10 text-center text-sm text-pampas/48">
-            {repos.length === 0
-              ? "No repositories loaded yet. OAuth wiring will populate this picker later."
-              : "No repositories match that search."}
+            {repos.length === 0 ? (
+              <div className="mx-auto max-w-lg space-y-2 text-pampas/56">
+                <p className="font-medium text-pampas/72">No repositories loaded yet.</p>
+                <p className="text-xs leading-relaxed text-pampas/52">
+                  {emptyStateHint?.trim() ||
+                    "Use Connect GitHub above (Clerk profile → Connected accounts), then Refresh—or ensure the API has CLERK_SECRET_KEY and CLERK_JWKS_URL. Check GET /github/clerk-status on the gateway."}
+                </p>
+              </div>
+            ) : (
+              "No repositories match that search."
+            )}
           </div>
         )}
       </div>

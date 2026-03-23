@@ -26,6 +26,14 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+### Environment variables
+
+Create **`.env.local`** (gitignored) in `frontend/` and set:
+
+- **`NEXT_PUBLIC_GATEWAY_URL`**: URL of the FastAPI gateway. Default in code is `http://localhost:4280`. For production builds, set this to your deployed API (e.g. `https://free-agents.onrender.com`) so GitHub OAuth, catalog, and agent APIs hit the right host.
+
+The gateway must allow your frontend origin in **`CORS_ORIGINS`** (or the OAuth popup will reject `return_to` for non-localhost). If GitHub says **`redirect_uri` is not associated with this application**, add the exact `redirect_uri` from `GET /github/oauth/start` to your GitHub app callbacks—see [docs/github-oauth-local.md](../docs/github-oauth-local.md).
+
 ### Build for Production
 
 ```bash

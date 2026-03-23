@@ -104,7 +104,12 @@ async def register_agent(request: Request) -> JSONResponse:
     except registry_store.AgentSpecInvalid as exc:
         return _agents_error(400, "AGENT_SPEC_INVALID", str(exc), details=getattr(exc, "details", None))
     except registry_store.AgentVersionExists as exc:
-        return _agents_error(409, "AGENT_VERSION_EXISTS", str(exc))
+        return _agents_error(
+            409,
+            "AGENT_VERSION_EXISTS",
+            str(exc),
+            details={"agent_id": exc.agent_id, "version": exc.version},
+        )
     except Exception as exc:
         logger.exception("register_agent failed")
         return _agents_error(500, "REGISTRY_ERROR", "Failed to register agent", details={"message": str(exc)})

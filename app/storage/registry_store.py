@@ -96,6 +96,11 @@ class AgentSpecInvalid(RegistryError):
 class AgentVersionExists(RegistryError):
     """Raised when attempting to register an existing (id, version)."""
 
+    def __init__(self, message: str, *, agent_id: str, version: str):
+        super().__init__(message)
+        self.agent_id = agent_id
+        self.version = version
+
 
 def _ensure_sqlite_dir() -> None:
     if is_postgres():
@@ -385,7 +390,11 @@ def register_agent(spec: Dict[str, Any], *, owner_user_id: Optional[str] = None)
             (normalized["id"], normalized["version"]),
         ).fetchone()
         if existing is not None:
-            raise AgentVersionExists(f"Agent version already exists: {normalized['id']}@{normalized['version']}")
+            raise AgentVersionExists(
+                f"Agent version already exists: {normalized['id']}@{normalized['version']}",
+                agent_id=normalized["id"],
+                version=normalized["version"],
+            )
         conn.execute(
             sql(
                 """

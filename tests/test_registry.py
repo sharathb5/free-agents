@@ -244,6 +244,7 @@ def test_register_duplicate_id_version_returns_409_agent_version_exists(
     second = _register_spec_json(client, spec=spec, gateway_db_path=gateway_db_path)
     assert second["status_code"] == 409
     _assert_error_envelope(second["body"], expected_code="AGENT_VERSION_EXISTS")
+    assert second["body"]["error"].get("details") == {"agent_id": "dup-agent", "version": "1.0.0"}
 
 
 # --- T4: List agents default latest_only=true ----------------------------------

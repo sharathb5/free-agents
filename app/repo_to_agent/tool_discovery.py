@@ -8,8 +8,11 @@ All recommendations are constrained to the tool and bundle catalogs.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, List, Set
+
+_log = logging.getLogger(__name__)
 
 from app.catalog.loader import CatalogError, load_bundles_catalog, load_tools_catalog
 from app.recommendations.layered_mapping import (
@@ -286,9 +289,13 @@ def discover_tools_from_repo(
         )
     else:
         rationale.append(f"Final recommended bundle: '{bundle_id}'.")
-    rationale.append(
-        f"Repo type classified as {repo_type_result.repo_type} (confidence={repo_type_result.confidence:.2f})."
+    _log.info(
+        "tool_discovery repo_type=%s confidence=%.2f bundle_id=%s",
+        repo_type_result.repo_type,
+        repo_type_result.confidence,
+        bundle_id,
     )
+    rationale.append(f"Repo type classified as {repo_type_result.repo_type}.")
 
     return {
         "bundle_id": bundle_id,

@@ -4,7 +4,8 @@ import * as React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
-import { SignInButton, SignedIn, SignedOut, UserButton, useAuth, useUser } from "@clerk/nextjs"
+import { useAuth, useClerk, useUser } from "@clerk/nextjs"
+import { ClerkHeaderAuth } from "@/components/ClerkHeaderAuth"
 import { Button } from "@/components/ui/button"
 import { SourceSelectionStep } from "./SourceSelectionStep"
 import { UploadFlowStepper } from "./UploadFlowStepper"
@@ -19,9 +20,15 @@ import {
   createEmptyDraft,
   fetchCatalogBundles,
   fetchCatalogTools,
+  fetchGitHubRepos,
   draftToRecommendToolsInput,
   fetchRepoRunResult,
   fetchRepoRunStatus,
+  getClerkSessionToken,
+  GatewayRequestError,
+  GitHubConnectionState,
+  GitHubRepoSummary,
+  githubRepoToImportUrl,
   normalizeDraftFromRepo,
   recommendTools,
   registerAgent,
@@ -47,22 +54,6 @@ const IMPORT_STAGES = [
   "Parsing agent details",
   "Generating recommendations",
 ] as const
-
-const DEBUG_INGEST = "http://127.0.0.1:7244/ingest/ae01b678-64f7-4cef-bc43-0deae76993d4"
-
-function debugLog(payload: { location: string; message: string; data?: Record<string, unknown>; hypothesisId: string; runId: string }) {
-  // #region agent log
-  fetch(DEBUG_INGEST, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "db76a9" },
-    body: JSON.stringify({
-      sessionId: "db76a9",
-      timestamp: Date.now(),
-      ...payload,
-    }),
-  }).catch(() => {})
-  // #endregion agent log
-}
 
 function normalizeToolIdCandidate(value: string) {
   return value
@@ -127,7 +118,8 @@ function validateDraft(draft: UploadAgentDraft) {
 
 export function AgentUploadFlow() {
   const router = useRouter()
-  const { isSignedIn, getToken } = useAuth()
+  const { isSignedIn, getToken, isLoaded: clerkAuthLoaded } = useAuth()
+  const { openUserProfile } = useClerk()
   const { user } = useUser()
 
   const [path, setPath] = React.useState<UploadFlowPath | null>(null)
@@ -147,12 +139,25 @@ export function AgentUploadFlow() {
   const [recommendationRationale, setRecommendationRationale] = React.useState<string | null>(null)
   const [reviewNotes, setReviewNotes] = React.useState<string[]>([])
   const [repoUrl, setRepoUrl] = React.useState("")
+  const [githubConnectionState, setGitHubConnectionState] = React.useState<GitHubConnectionState>({
+    provider: "github",
+    status: "disconnected",
+    message: "Sign in, then connect GitHub to browse repositories.",
+    oauth_configured: true,
+  })
+  const [githubRepos, setGitHubRepos] = React.useState<GitHubRepoSummary[]>([])
+  const [githubReposLoading, setGitHubReposLoading] = React.useState(false)
+  const [githubReposError, setGitHubReposError] = React.useState("")
+  const [selectedGitHubRepo, setSelectedGitHubRepo] = React.useState<GitHubRepoSummary | null>(null)
+  const [githubConnecting, setGitHubConnecting] = React.useState(false)
+  const [githubSessionId, setGitHubSessionId] = React.useState("")
+  const pendingGitHubRefreshAfterProfileRef = React.useRef(false)
   const [repoSummary, setRepoSummary] = React.useState("")
   const [repoRunId, setRepoRunId] = React.useState("")
   const [importLoading, setImportLoading] = React.useState(false)
   const [importProgressIndex, setImportProgressIndex] = React.useState(0)
   const [importError, setImportError] = React.useState("")
-  const [statusMessage, setStatusMessage] = React.useState("")
+  const [statusMessage, setStatusMessage] = React.useState<React.ReactNode>("")
   const [statusTone, setStatusTone] = React.useState<"idle" | "error" | "success">("idle")
   const [submitting, setSubmitting] = React.useState(false)
   const [addToolsOpen, setAddToolsOpen] = React.useState(false)
@@ -258,6 +263,80 @@ export function AgentUploadFlow() {
     }
   }, [])
 
+  const loadGitHubRepos = React.useCallback(async () => {
+    if (!clerkAuthLoaded) {
+      return
+    }
+    setGitHubReposLoading(true)
+    setGitHubReposError("")
+    try {
+      if (!isSignedIn && !githubSessionId) {
+        setGitHubRepos([])
+        setGitHubConnectionState({
+          provider: "github",
+          status: "disconnected",
+          message: "Sign in or connect GitHub directly to browse repositories.",
+          oauth_configured: true,
+        })
+        return
+      }
+      const token = isSignedIn
+        ? await getClerkSessionToken({ getToken })
+        : null
+      if (isSignedIn && !token && !githubSessionId) {
+        setGitHubRepos([])
+        setGitHubConnectionState({
+          provider: "github",
+          status: "error",
+          message:
+            "Clerk did not return a session token (getToken was empty). Wait a moment and click Refresh, or sign out and sign in again.",
+          oauth_configured: true,
+        })
+        return
+      }
+      const response = await fetchGitHubRepos({
+        token: token || undefined,
+        sessionId: githubSessionId || undefined,
+      })
+      setGitHubRepos(response.repos || [])
+      setGitHubConnectionState(response.connection)
+    } catch (error) {
+      setGitHubRepos([])
+      setGitHubReposError(error instanceof Error ? error.message : "Failed to load GitHub repositories")
+      setGitHubConnectionState({
+        provider: "github",
+        status: "error",
+        message: error instanceof Error ? error.message : "Failed to load GitHub repositories",
+        oauth_configured: true,
+      })
+    } finally {
+      setGitHubReposLoading(false)
+    }
+  }, [clerkAuthLoaded, getToken, githubSessionId, isSignedIn])
+
+  React.useEffect(() => {
+    if (path !== "github" || step !== 0) return
+    loadGitHubRepos().catch(() => {
+      // Non-blocking. The explicit connect action will surface details.
+    })
+  }, [loadGitHubRepos, path, step])
+
+  React.useEffect(() => {
+    if (path !== "github" || step !== 0) return
+    const maybeRefresh = () => {
+      if (document.visibilityState !== "visible") return
+      if (!pendingGitHubRefreshAfterProfileRef.current) return
+      pendingGitHubRefreshAfterProfileRef.current = false
+      loadGitHubRepos().catch(() => {})
+    }
+    document.addEventListener("visibilitychange", maybeRefresh)
+    window.addEventListener("focus", maybeRefresh)
+    return () => {
+      document.removeEventListener("visibilitychange", maybeRefresh)
+      window.removeEventListener("focus", maybeRefresh)
+    }
+  }, [loadGitHubRepos, path, step])
+
   React.useEffect(() => {
     if (!path || step < 1) return
     let cancelled = false
@@ -352,23 +431,6 @@ export function AgentUploadFlow() {
         setExtractedTools(discovered)
         setExtractedToolIds(inferExtractedToolIds({ extractedTools: discovered, toolCategories }))
         setWrappedRepoTools(wrapped)
-        debugLog({
-          runId: "pre-fix",
-          hypothesisId: "H7",
-          location: "frontend/components/agent-upload/AgentUploadFlow.tsx:repoPollTick",
-          message: "Frontend received tools from API (what we surface)",
-          data: {
-            stage: "frontend_received",
-            discovered_repo_tools_count: discovered.length,
-            discovered_repo_tools: discovered.map((t: { name?: string; tool_type?: string; source_path?: string }) => ({
-              name: t.name,
-              tool_type: t.tool_type,
-              source_path: t.source_path,
-            })),
-            wrapped_repo_tools_count: wrapped.length,
-            wrapped_repo_tools: wrapped.map((t: { name?: string; tool_type?: string }) => ({ name: t.name, tool_type: t.tool_type })),
-          },
-        })
         setImportLoading(false)
         setImportProgressIndex(IMPORT_STAGES.length - 1)
         setStep(1)
@@ -376,16 +438,6 @@ export function AgentUploadFlow() {
       } catch (error) {
         if (cancelled) return
         setImportLoading(false)
-        debugLog({
-          runId: "pre-fix",
-          hypothesisId: "H3",
-          location: "frontend/components/agent-upload/AgentUploadFlow.tsx:repoPollTick",
-          message: "Repo import polling failed",
-          data: {
-            repoRunId,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        })
         setImportError(error instanceof Error ? error.message : "Failed to import repository")
       }
     }
@@ -466,6 +518,57 @@ export function AgentUploadFlow() {
     }
   }
 
+  const connectGitHub = async () => {
+    setGitHubConnecting(true)
+    setGitHubReposError("")
+    try {
+      if (!isSignedIn) {
+        throw new Error("Sign in first, then connect GitHub.")
+      }
+      pendingGitHubRefreshAfterProfileRef.current = true
+      openUserProfile()
+      setGitHubConnectionState({
+        provider: "github",
+        status: "disconnected",
+        message:
+          "In your profile, use Connected accounts to link or manage GitHub. When you close the profile, the repo list reloads when this tab regains focus—or click Refresh in the picker.",
+        oauth_configured: true,
+      })
+    } catch (error) {
+      setGitHubConnectionState({
+        provider: "github",
+        status: "error",
+        message: error instanceof Error ? error.message : "GitHub connection failed",
+        oauth_configured: true,
+      })
+      setGitHubReposError(error instanceof Error ? error.message : "GitHub connection failed")
+    } finally {
+      setGitHubConnecting(false)
+    }
+  }
+
+  const importSelectedGitHubRepo = async () => {
+    if (!selectedGitHubRepo) {
+      setImportError("Select a repository first.")
+      return
+    }
+    if (selectedGitHubRepo.private) {
+      setImportError("Private repo import is not enabled in the current parser path yet.")
+      return
+    }
+    setRepoUrl(githubRepoToImportUrl(selectedGitHubRepo))
+    setImportError("")
+    try {
+      setImportLoading(true)
+      setImportProgressIndex(0)
+      const response = await startRepoImport(githubRepoToImportUrl(selectedGitHubRepo))
+      setRepoRunId(response.run_id)
+    } catch (error) {
+      setImportLoading(false)
+      setImportError(error instanceof Error ? error.message : "Failed to start repository import")
+    }
+  }
+
   const moveFromDetails = () => {
     const missing = validateDraft(draft)
     if (missing.length > 0) {
@@ -497,9 +600,7 @@ export function AgentUploadFlow() {
     try {
       setSubmitting(true)
       setStatusMessage("")
-      const token = await getToken({
-        template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
-      })
+      const token = await getClerkSessionToken({ getToken })
       if (!token) {
         throw new Error("Missing session token. Please sign in again.")
       }
@@ -517,7 +618,36 @@ export function AgentUploadFlow() {
       window.setTimeout(() => router.push("/"), 700)
     } catch (error) {
       setStatusTone("error")
-      setStatusMessage(error instanceof Error ? error.message : "Failed to register agent")
+      if (
+        error instanceof GatewayRequestError &&
+        error.code === "AGENT_VERSION_EXISTS" &&
+        error.details &&
+        typeof error.details === "object" &&
+        error.details !== null
+      ) {
+        const d = error.details as Record<string, unknown>
+        const aid = typeof d.agent_id === "string" ? d.agent_id : ""
+        const ver = typeof d.version === "string" ? d.version : ""
+        if (aid && ver) {
+          const href = `/?agent=${encodeURIComponent(aid)}&version=${encodeURIComponent(ver)}`
+          setStatusMessage(
+            <>
+              Agent version already exists:{" "}
+              <Link
+                href={href}
+                className="font-medium text-red-100 underline decoration-red-200/60 underline-offset-2 hover:decoration-red-100"
+              >
+                {aid}@{ver}
+              </Link>
+              {" — open spec in the marketplace."}
+            </>
+          )
+        } else {
+          setStatusMessage(error.message)
+        }
+      } else {
+        setStatusMessage(error instanceof Error ? error.message : "Failed to register agent")
+      }
     } finally {
       setSubmitting(false)
     }
@@ -531,17 +661,17 @@ export function AgentUploadFlow() {
             <ArrowLeft className="h-4 w-4" />
             Back to marketplace
           </Link>
-          <div className="flex items-center gap-3">
-            <SignedOut>
-              <SignInButton>
-                <button className="rounded-full border border-rock-blue/20 bg-pampas/8 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-pampas/75">
-                  Sign in
-                </button>
-              </SignInButton>
-            </SignedOut>
-            <SignedIn>
-              <UserButton afterSignOutUrl="/" />
-            </SignedIn>
+          <div className="flex min-h-[2.25rem] items-center gap-3">
+            <ClerkHeaderAuth
+              variant="hero"
+              userButtonProps={{
+                userProfileProps: {
+                  additionalOAuthScopes: {
+                    github: ["repo"],
+                  },
+                },
+              }}
+            />
           </div>
         </div>
 
@@ -579,6 +709,26 @@ export function AgentUploadFlow() {
                 progressLabel={IMPORT_STAGES[importProgressIndex]}
                 progressValue={Math.round(((importProgressIndex + (importLoading ? 0.4 : 1)) / IMPORT_STAGES.length) * 100)}
                 error={importError}
+                githubConnectionState={githubConnectionState}
+                githubRepos={githubRepos}
+                githubReposLoading={githubReposLoading}
+                githubReposError={githubReposError}
+                selectedGitHubRepo={selectedGitHubRepo}
+                onConnectGitHub={connectGitHub}
+                onRefreshGitHubRepos={() => {
+                  void loadGitHubRepos()
+                }}
+                onSelectGitHubRepo={(repo) => {
+                  setSelectedGitHubRepo(repo)
+                  setRepoUrl(githubRepoToImportUrl(repo))
+                  if (repo.private) {
+                    setImportError("Private repo import is not enabled in the current parser path yet.")
+                  } else {
+                    setImportError("")
+                  }
+                }}
+                onImportSelectedRepo={importSelectedGitHubRepo}
+                isConnectingGitHub={githubConnecting}
               />
             )}
 
