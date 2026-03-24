@@ -1,21 +1,6 @@
 "use client"
 
 export const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4280"
-const DEBUG_INGEST = "http://127.0.0.1:7244/ingest/ae01b678-64f7-4cef-bc43-0deae76993d4"
-
-function debugLog(payload: { location: string; message: string; data?: Record<string, unknown>; hypothesisId: string; runId: string }) {
-  // #region agent log
-  fetch(DEBUG_INGEST, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "db76a9" },
-    body: JSON.stringify({
-      sessionId: "db76a9",
-      timestamp: Date.now(),
-      ...payload,
-    }),
-  }).catch(() => {})
-  // #endregion agent log
-}
 
 export type UploadFlowPath = "build" | "github"
 
@@ -114,18 +99,34 @@ export interface GitHubConnectionState {
   provider: "github"
   message?: string | null
   oauth_configured?: boolean
+  connection_source?: "clerk" | "legacy_oauth"
 }
 
 export interface GitHubOAuthStartResponse {
   provider: "github"
   status: "not_configured" | "ready"
   authorization_url?: string | null
+  /** Must match GitHub app "Authorization callback URL" (or GitHub App user callback). */
+  redirect_uri?: string | null
   message?: string | null
 }
 
 export interface GitHubRepoListResponse {
   repos: GitHubRepoSummary[]
   connection: GitHubConnectionState
+}
+
+export interface GitHubOAuthPopupMessage {
+  source: "github-oauth"
+  status: "connected" | "error"
+  session_id?: string
+  github_login?: string | null
+  message?: string | null
+}
+
+export interface GitHubConnectAction {
+  mode: "oauth_popup"
+  message: string
 }
 
 export interface RepoDiscoveredTool {
@@ -177,24 +178,26 @@ function buildErrorMessage(data: any, fallback: string) {
   return data?.error?.message || data?.message || fallback
 }
 
+/** Thrown when the gateway returns a non-2xx JSON error envelope (see `error.code` / `error.details`). */
+export class GatewayRequestError extends Error {
+  readonly code: string | undefined
+  readonly details: unknown
+
+  constructor(message: string, opts?: { code?: string; details?: unknown }) {
+    super(message)
+    this.name = "GatewayRequestError"
+    this.code = opts?.code
+    this.details = opts?.details
+  }
+}
+
 async function parseJsonResponse<T>(response: Response, fallback: string): Promise<T> {
   const data = await response.json().catch(() => null)
   if (!response.ok) {
-    debugLog({
-      runId: "pre-fix",
-      hypothesisId: "H1",
-      location: "frontend/lib/agent-upload.ts:parseJsonResponse",
-      message: "Gateway request failed",
-      data: {
-        status: response.status,
-        statusText: response.statusText,
-        fallback,
-        errorCode: typeof data?.error?.code === "string" ? data.error.code : undefined,
-        errorMessage: typeof data?.error?.message === "string" ? data.error.message : undefined,
-        message: typeof data?.message === "string" ? data.message : undefined,
-      },
+    throw new GatewayRequestError(buildErrorMessage(data, fallback), {
+      code: data?.error?.code,
+      details: data?.error?.details,
     })
-    throw new Error(buildErrorMessage(data, fallback))
   }
   return data as T
 }
@@ -373,28 +376,123 @@ export async function recommendTools(input: RecommendToolsInput) {
   } satisfies RecommendToolsResult
 }
 
-export async function startGitHubOAuth() {
+export async function startGitHubOAuth(returnTo: string) {
   return parseJsonResponse<GitHubOAuthStartResponse>(
-    await fetch(`${GATEWAY_URL}/github/oauth/start`, { cache: "no-store" }),
+    await fetch(`${GATEWAY_URL}/github/oauth/start?${new URLSearchParams({ return_to: returnTo }).toString()}`, {
+      cache: "no-store",
+    }),
     "GitHub OAuth is not available yet"
   )
 }
 
-export async function fetchGitHubRepos() {
+export async function fetchGitHubRepos(args?: { token?: string; sessionId?: string }) {
+  const query = new URLSearchParams()
+  if (args?.sessionId) query.set("session_id", args.sessionId)
   return parseJsonResponse<GitHubRepoListResponse>(
-    await fetch(`${GATEWAY_URL}/github/repos`, { cache: "no-store" }),
+    await fetch(`${GATEWAY_URL}/github/repos${query.toString() ? `?${query.toString()}` : ""}`, {
+      cache: "no-store",
+      headers: args?.token ? { Authorization: `Bearer ${args.token}` } : undefined,
+    }),
     "GitHub repository listing is not available yet"
   )
 }
 
-export async function startRepoImport(url: string) {
-  debugLog({
-    runId: "pre-fix",
-    hypothesisId: "H4",
-    location: "frontend/lib/agent-upload.ts:startRepoImport",
-    message: "Starting repo import",
-    data: { gatewayUrl: GATEWAY_URL, repoUrlHost: (() => { try { return new URL(url).host } catch { return "invalid" } })() },
+export async function getGitHubConnectAction() {
+  return {
+    mode: "oauth_popup",
+    message: "Authorize GitHub for this app, then choose a repository from the picker.",
+  } satisfies GitHubConnectAction
+}
+
+export async function connectGitHubWithPopup() {
+  const returnTo = window.location.origin
+  const start = await startGitHubOAuth(returnTo)
+  if (start.status !== "ready" || !start.authorization_url) {
+    throw new Error(start.message || "GitHub OAuth is not available yet")
+  }
+
+  const popup = window.open(
+    start.authorization_url,
+    "github-oauth",
+    "popup=yes,width=720,height=820,resizable=yes,scrollbars=yes"
+  )
+  if (!popup) {
+    throw new Error("GitHub popup was blocked. Allow popups for this site and try again.")
+  }
+
+  return new Promise<GitHubOAuthPopupMessage>((resolve, reject) => {
+    let settled = false
+    const allowedOrigin = (() => {
+      try {
+        return new URL(GATEWAY_URL).origin
+      } catch {
+        return window.location.origin
+      }
+    })()
+
+    const cleanup = () => {
+      window.removeEventListener("message", handleMessage)
+      window.clearInterval(closePoll)
+    }
+
+    const finish = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      fn()
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== allowedOrigin && event.origin !== window.location.origin) return
+      const data = event.data as GitHubOAuthPopupMessage | undefined
+      if (!data || data.source !== "github-oauth") return
+      finish(() => {
+        if (data.status === "connected" && data.session_id) {
+          resolve(data)
+          return
+        }
+        reject(new Error(data.message || "GitHub authorization failed"))
+      })
+    }
+
+    const closePoll = window.setInterval(() => {
+      if (!popup.closed) return
+      finish(() => reject(new Error("GitHub authorization was canceled before it completed.")))
+    }, 400)
+
+    window.addEventListener("message", handleMessage)
   })
+}
+
+/**
+ * Clerk bearer token for this app’s FastAPI gateway (`NEXT_PUBLIC_GATEWAY_URL`).
+ *
+ * Uses the **default session JWT** so backend verification matches `CLERK_JWKS_URL` /
+ * `CLERK_ISSUER`. Named JWT templates (`NEXT_PUBLIC_CLERK_JWT_TEMPLATE`) usually change
+ * `aud` / `iss` and cause "Invalid or expired session token" unless the gateway is
+ * configured for that template. Opt in with `NEXT_PUBLIC_GATEWAY_USE_CLERK_JWT_TEMPLATE=1`.
+ */
+export async function getClerkSessionToken(args: {
+  getToken: (options?: { template?: string }) => Promise<string | null>
+}) {
+  const template = (process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || "").trim() || undefined
+  const useTemplate =
+    (process.env.NEXT_PUBLIC_GATEWAY_USE_CLERK_JWT_TEMPLATE || "").trim().toLowerCase() === "1" ||
+    (process.env.NEXT_PUBLIC_GATEWAY_USE_CLERK_JWT_TEMPLATE || "").trim().toLowerCase() === "true"
+  if (template && useTemplate) {
+    try {
+      return await args.getToken({ template })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!message.includes("No JWT template exists with name")) {
+        throw error
+      }
+    }
+  }
+  return args.getToken()
+}
+
+export async function startRepoImport(url: string) {
   const execution_backend =
     (process.env.NEXT_PUBLIC_REPO_TO_AGENT_BACKEND || "").trim() || "internal"
   return parseJsonResponse<RepoRunResponse>(

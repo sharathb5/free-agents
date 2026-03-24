@@ -7,9 +7,22 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+# Environment and secrets (never commit)
 .env
 .env.*
+.env*.local
+.envfrontend
+# Allow a checked-in template only if you add one: !.env.example
 .DS_Store
+
+# Cursor / IDE (debug logs, local settings — may contain paths or payloads)
+.cursor/
+
+# Local gateway / CLI logs (may echo requests or tokens)
+*.log
+
+# Key material (JWT keys, TLS, etc.)
+*.pem
 
 # Build artifacts (pip install / python -m build)
 dist/

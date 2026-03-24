@@ -1,4 +1,21 @@
 {
+  "draft-from-repo": {
+    "input": {
+      "question": "How does this repository support multi-agent orchestration and tool use?",
+      "owner": "openai",
+      "repo": "openai-agents-python"
+    },
+    "output": {
+      "answer": "The openai-agents-python SDK supports multi-agent orchestration through three core mechanisms:\n\n1. Handoffs — Agents transfer control to other agents via the handoff() primitive, enabling sequential pipelines and specialized sub-agents.\n\n2. Runner — The Runner class manages the full agent loop synchronously (Runner.run_sync) or asynchronously (Runner.run). It handles model calls, tool dispatch, and handoffs until a final output is produced.\n\n3. Tool use — Agents accept an optional tools list of @function_tool-decorated callables. The SDK auto-generates JSON schemas, dispatches calls, and injects results back into the conversation.\n\nKey entry points: src/agents/agent.py (Agent definition), src/agents/run.py (Runner), src/agents/tool.py (tool primitives), src/agents/handoffs.py (handoff logic), examples/ (multi-agent usage patterns).",
+      "key_files": [
+        "src/agents/agent.py",
+        "src/agents/run.py",
+        "src/agents/tool.py",
+        "src/agents/handoffs.py",
+        "examples/"
+      ]
+    }
+  },
   "summarizer": {
     "input": {
       "text": "OpenAI released a new model that improves reasoning and tool use."

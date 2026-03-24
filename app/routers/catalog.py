@@ -4,6 +4,8 @@ Catalog API (Part 5): tools by category, bundles, recommend bundle, resolve spec
 
 from __future__ import annotations
 
+import logging
+
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -24,6 +26,7 @@ from app.recommendations.tool_recommender import (
 )
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
+_log = logging.getLogger(__name__)
 
 
 def _get_merged_tools_list() -> List[Dict[str, Any]]:
@@ -203,7 +206,14 @@ async def post_catalog_recommend(request: Request) -> JSONResponse:
     if agent_idea is not None and not isinstance(agent_idea, str):
         agent_idea = str(agent_idea)
     result = recommend_bundle(agent_idea or "")
-    return JSONResponse(status_code=200, content=result)
+    _log.info(
+        "catalog/recommend bundle_id=%r confidence=%r rationale_preview=%r",
+        result.get("bundle_id"),
+        result.get("confidence"),
+        (result.get("rationale") or "")[:120],
+    )
+    body = {k: v for k, v in result.items() if k != "confidence"}
+    return JSONResponse(status_code=200, content=body)
 
 
 @router.post("/tools/resolve")

@@ -48,7 +48,7 @@ def connect() -> Any:
         if psycopg is None:
             raise RuntimeError("psycopg is required for Postgres connections")
         try:
-            return psycopg.connect(info.database_url, row_factory=dict_row)
+            return psycopg.connect(info.database_url, row_factory=dict_row, connect_timeout=8)
         except Exception as exc:
             # Never leak DATABASE_URL credentials via exception text/tracebacks.
             # psycopg errors can include conninfo attempts with passwords.

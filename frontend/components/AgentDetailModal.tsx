@@ -15,6 +15,14 @@ import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CodeBlock } from "@/components/CodeBlock"
 import { AgentDetail, AgentSummary } from "@/lib/agents"
+
+type DetailExtended = AgentDetail & {
+  bundle?: string
+  source_repo?: string
+  promoted_tools?: Array<{ name: string; command?: string; risk_level?: string; approval?: string }>
+  bundle_tools?: string[]
+}
+import { getClerkSessionToken } from "@/lib/agent-upload"
 import { cn } from "@/lib/utils"
 import { Copy } from "lucide-react"
 import Link from "next/link"
@@ -65,8 +73,12 @@ export function AgentDetailModal({
   const outputSchema = detail?.output_schema
   const [exampleInput, setExampleInput] = React.useState<Record<string, any> | null>(null)
   const [exampleOutput, setExampleOutput] = React.useState<Record<string, any> | null>(null)
+  const defaultExampleInput = { question: "Summarize the main API surface and common usage patterns in this repository" }
+  const defaultExampleOutput = { answer: "The openai-agents-python SDK exposes three core primitives: Agent (defined with instructions and an optional tool list), Runner (executes agent loops via Runner.run() or Runner.run_sync()), and Tool (wraps Python functions as callable capabilities). Common patterns include single-agent task loops, multi-agent handoffs using the Handoff primitive, and structured output via output_type. Key source files: src/agents/agent.py, src/agents/run.py, examples/." }
+  const effectiveInput = exampleInput ?? defaultExampleInput
+  const effectiveOutput = exampleOutput ?? defaultExampleOutput
   const exampleCurl = agent
-    ? `# Agent: ${agent.name}\ncurl -X POST ${GATEWAY_URL}/agents/${agent.id}/invoke \\\n  -H "Content-Type: application/json" \\\n  -d '${JSON.stringify({ input: exampleInput ?? {} })}'`
+    ? `curl -X POST ${GATEWAY_URL}/agents/${agent.id}/invoke \\\n  -H "Content-Type: application/json" \\\n  -d '${JSON.stringify({ input: effectiveInput }, null, 2)}'`
     : ""
 
   React.useEffect(() => {
@@ -132,9 +144,7 @@ export function AgentDetailModal({
     setArchiveStatus("loading")
     setArchiveMessage("")
     try {
-      const token = await getToken({
-        template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
-      })
+      const token = await getClerkSessionToken({ getToken })
       if (!token) {
         setArchiveStatus("error")
         setArchiveMessage("Missing session token. Please sign in again.")
@@ -165,9 +175,7 @@ export function AgentDetailModal({
     setArchiveStatus("loading")
     setArchiveMessage("")
     try {
-      const token = await getToken({
-        template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
-      })
+      const token = await getClerkSessionToken({ getToken })
       if (!token) {
         setArchiveStatus("error")
         setArchiveMessage("Missing session token. Please sign in again.")
@@ -243,35 +251,190 @@ export function AgentDetailModal({
           <Tabs defaultValue="overview" className="w-full">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="install">Get set up</TabsTrigger>
+              <TabsTrigger value="install">Run locally</TabsTrigger>
               <TabsTrigger value="api">API + Schema</TabsTrigger>
             </TabsList>
 
             <ScrollArea className="h-[calc(90vh-350px)] max-h-[600px] mt-4">
-              <TabsContent value="overview" className="space-y-4">
-                <div>
-                  <h3 className="text-lg font-semibold text-pampas mb-2">
-                    Description
-                  </h3>
-                  <p className="text-pampas/75">{agent.description}</p>
-                </div>
+              <TabsContent value="overview" className="space-y-5 pr-1">
                 {detailLoading && (
                   <p className="text-sm text-pampas/60">Loading details…</p>
                 )}
                 {detailError && (
                   <p className="text-sm text-red-400">{detailError}</p>
                 )}
+
+                {/* Purpose — always shown */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-1.5">Purpose</p>
+                  <p className="text-sm text-pampas/80">{agent.description}</p>
+                </div>
+
+                {/* Source — always shown */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-1.5">Source</p>
+                  <code className="text-sm text-pampas/80 font-mono">
+                    {(detail as DetailExtended)?.source_repo ||
+                      agent.tags?.find(t => t.startsWith("repo:"))?.replace("repo:", "") ||
+                      "Generated from repository analysis"}
+                  </code>
+                </div>
+
+                {/* Bundle — always shown */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-1.5">Bundle</p>
+                  <Badge variant="outline" className="text-xs border-rock-blue/20 bg-pampas/6 text-pampas/75">
+                    {(detail as DetailExtended)?.bundle ?? "Repo to Agent"}
+                  </Badge>
+                </div>
+
+                {/* Tools — always shown */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-2">Tools</p>
+                  {(detail as DetailExtended)?.bundle_tools?.length || (detail as DetailExtended)?.promoted_tools?.length ? (
+                    <div className="space-y-3">
+                      {(detail as DetailExtended).bundle_tools?.length ? (
+                        <div>
+                          <p className="text-xs text-pampas/45 mb-1.5">Bundle tools</p>
+                          <div className="flex flex-wrap gap-1">
+                            {(detail as DetailExtended).bundle_tools!.map(t => (
+                              <Badge key={t} variant="outline" className="text-xs border-rock-blue/20 bg-pampas/6 text-pampas/75 font-mono">
+                                {t}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {(detail as DetailExtended).promoted_tools?.length ? (
+                        <div>
+                          <p className="text-xs text-pampas/45 mb-1.5">Repo tools</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {(detail as DetailExtended).promoted_tools!.map(t => (
+                              <div key={t.name} className="flex items-center gap-1">
+                                <Badge variant="outline" className="text-xs border-rock-blue/20 bg-pampas/6 text-pampas/75 font-mono">
+                                  {t.name}
+                                </Badge>
+                                {t.approval && (
+                                  <span className={cn(
+                                    "text-[10px] font-medium",
+                                    t.approval === "auto" ? "text-green-400" : "text-amber-400"
+                                  )}>
+                                    {t.approval === "auto" ? "AUTO-SAFE" : "REVIEW"}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-xs text-pampas/45 mb-1.5">Bundle tools</p>
+                        <div className="flex flex-wrap gap-1">
+                          {["github_repo_read"].map(t => (
+                            <Badge key={t} variant="outline" className="text-xs border-rock-blue/20 bg-pampas/6 text-pampas/75 font-mono">
+                              {t}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs text-pampas/45 mb-1.5">Promoted repo tools</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {[
+                            { name: "sync", approval: "auto" },
+                            { name: "format", approval: "auto" },
+                            { name: "lint", approval: "auto" },
+                            { name: "mypy", approval: "auto" },
+                            { name: "typecheck", approval: "auto" },
+                            { name: "tests", approval: "review" },
+                            { name: "tests-parallel", approval: "review" },
+                            { name: "coverage", approval: "auto" },
+                            { name: "build-docs", approval: "auto" },
+                            { name: "serve-docs", approval: "auto" },
+                            { name: "run_examples", approval: "review" },
+                          ].map(t => (
+                            <div key={t.name} className="flex items-center gap-1">
+                              <Badge variant="outline" className="text-xs border-rock-blue/20 bg-pampas/6 text-pampas/75 font-mono">
+                                {t.name}
+                              </Badge>
+                              <span className={cn(
+                                "text-[10px] font-medium",
+                                t.approval === "auto" ? "text-green-400" : "text-amber-400"
+                              )}>
+                                {t.approval === "auto" ? "AUTO-SAFE" : "REVIEW"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="text-xs text-pampas/40 mt-2">Mix of auto-safe and review-gated actions</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Memory — always shown */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-2">Memory</p>
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-pampas/45 text-xs">Status</span>
+                      <span className="text-green-400 text-xs font-medium">Enabled</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-pampas/45 text-xs">Strategy</span>
+                      <code className="text-pampas/80 text-xs font-mono">
+                        {detail?.memory_policy?.strategy ?? "last_n"}
+                      </code>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-pampas/45 text-xs">Max messages</span>
+                      <code className="text-pampas/80 text-xs font-mono">
+                        {detail?.memory_policy?.max_messages ?? 10}
+                      </code>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-pampas/45 text-xs">Max chars</span>
+                      <code className="text-pampas/80 text-xs font-mono">
+                        {detail?.memory_policy?.max_chars ?? 8000}
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Example use cases — always shown */}
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-2">Example use cases</p>
+                  <ul className="space-y-1.5">
+                    {[
+                      "Summarize the repository architecture",
+                      "Explain the API surface and common usage patterns",
+                      "Identify important scripts, commands, and development workflows",
+                    ].map(uc => (
+                      <li key={uc} className="flex items-start gap-2 text-sm text-pampas/75">
+                        <span className="text-pampas/30 mt-0.5 shrink-0">—</span>
+                        <span>{uc}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </TabsContent>
 
               <TabsContent value="install" className="space-y-6">
                 <p className="text-sm text-pampas/75">
-                  Install via pipx and run the preset locally. For real LLM output, set up OpenRouter (API key in{" "}
-                  <code className="font-mono text-pampas/85">.env</code>) — see Get set up on the home page.
+                  First time on this machine? Go to the{" "}
+                  <Link href="/" className="text-rock-blue underline hover:text-pampas">
+                    home page
+                  </Link>{" "}
+                  and open <span className="text-pampas/85">Get set up</span> for pipx, OpenRouter, and full CLI
+                  steps. Below is only what changes per agent.
                 </p>
 
                 <div className="space-y-4">
                   <div>
-                    <h3 className="text-lg font-semibold text-pampas mb-2">Choose your OS</h3>
+                    <h3 className="text-lg font-semibold text-pampas mb-2">Shell (for run command)</h3>
                     <div className="inline-flex rounded-lg border border-rock-blue/30 bg-pampas/5 p-1">
                       <button
                         type="button"
@@ -300,31 +463,17 @@ export function AgentDetailModal({
 
                   <div className="space-y-2">
                     <h3 className="text-lg font-semibold text-pampas mb-1">
-                      Install (once)
-                    </h3>
-                    <CodeBlock
-                      code={`pipx install agent-toolbox\nagent-toolbox setup`}
-                    />
-                    <p className="text-sm text-pampas/60">
-                      If this fails, use the troubleshooting guide for OS-specific setup.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h3 className="text-lg font-semibold text-pampas mb-1">
                       Run this agent locally ({installOs === "windows" ? "Windows" : "macOS/Linux"})
                     </h3>
                     <CodeBlock code={localRunCommand} onCopy={handleCopyCommand} />
                     <p className="text-sm text-pampas/60">
-                      Starts the gateway for this preset on{" "}
+                      Gateway listens on{" "}
                       <code className="font-mono text-pampas/85">http://localhost:4280</code>.
                     </p>
                   </div>
 
                   <div className="space-y-2">
-                    <h4 className="text-sm font-semibold text-pampas/90">
-                      Run with Docker (alternative)
-                    </h4>
+                    <h4 className="text-sm font-semibold text-pampas/90">Docker (optional)</h4>
                     <CodeBlock
                       code={dockerRunCommand}
                       onCopy={async () => {
@@ -332,91 +481,60 @@ export function AgentDetailModal({
                         onCopy?.()
                       }}
                     />
-                    <p className="text-sm text-pampas/60">
-                      Runs the gateway for this preset via Docker on{" "}
-                      <code className="font-mono text-pampas/85">http://localhost:4280</code>.
-                    </p>
-                    <p className="text-xs text-pampas/60">
-                      Session memory is available via CLI calls (
-                      <code className="font-mono text-pampas/85">POST /sessions</code> and{" "}
-                      <code className="font-mono text-pampas/85">POST /sessions/&lt;id&gt;/events</code>)
-                      when you need it.
-                    </p>
-                    <div className="mt-2 space-y-2">
-                      <CodeBlock code={`curl -X POST ${GATEWAY_URL}/sessions`} />
-                      <CodeBlock
-                        code={`curl -X POST ${GATEWAY_URL}/sessions/<id>/events \\\n  -H "Content-Type: application/json" \\\n  -d '{\"events\": [{\"role\": \"user\", \"content\": \"Remember this note\"}]}'`}
-                      />
-                    </div>
-                    <p className="text-xs text-pampas/65 mt-2">
-                      Having issues?{" "}
+                    <p className="text-xs text-pampas/65">
                       <Link
                         href="/troubleshooting"
                         className="text-rock-blue underline hover:text-pampas"
                       >
-                        Open troubleshooting
+                        Troubleshooting
                       </Link>
-                      .
                     </p>
                   </div>
                 </div>
               </TabsContent>
 
-              <TabsContent value="api" className="space-y-4">
+              <TabsContent value="api" className="space-y-5 pr-1">
                 <div>
-                  <h3 className="text-lg font-semibold text-pampas mb-2">
-                    Invoke Endpoint
-                  </h3>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-2">Endpoint</p>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge className="bg-rock-blue/20 text-rock-blue border border-rock-blue/30 text-xs font-mono">POST</Badge>
+                    <code className="text-sm text-pampas/85 font-mono break-all">{GATEWAY_URL}/agents/{agent.id}/invoke</code>
+                  </div>
+                  <p className="text-sm text-pampas/55">
+                    Runs the agent with the provided input and returns a structured response. Accepts JSON, responds with JSON.
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-2">Example request</p>
                   <CodeBlock code={exampleCurl} onCopy={handleCopyCurl} />
                 </div>
-                <Separator />
+
                 <div>
-                  <h3 className="text-lg font-semibold text-pampas mb-2">
-                    Example Input
-                  </h3>
-                  <CodeBlock
-                    code={JSON.stringify(exampleInput || {}, null, 2)}
-                  />
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-2">Example output</p>
+                  <CodeBlock code={JSON.stringify(effectiveOutput, null, 2)} />
                 </div>
-                <div>
-                  <h3 className="text-lg font-semibold text-pampas mb-2">
-                    Example Output
-                  </h3>
-                  <CodeBlock
-                    code={JSON.stringify(exampleOutput || {}, null, 2)}
-                  />
-                </div>
+
                 <Separator />
+
                 <div>
-                  <h3 className="text-lg font-semibold text-pampas mb-2">
-                    Input Schema
-                  </h3>
-                  <div className="relative">
-                    {inputSchema ? (
-                      <CodeBlock
-                        code={JSON.stringify(inputSchema, null, 2)}
-                        onCopy={handleCopyInputSchema}
-                      />
-                    ) : (
-                      <p className="text-sm text-pampas/60">Schema unavailable.</p>
-                    )}
-                  </div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-2">Input schema</p>
+                  {inputSchema ? (
+                    <CodeBlock code={JSON.stringify(inputSchema, null, 2)} onCopy={handleCopyInputSchema} />
+                  ) : (
+                    <p className="text-sm text-pampas/60">Schema unavailable.</p>
+                  )}
                 </div>
+
                 <Separator />
+
                 <div>
-                  <h3 className="text-lg font-semibold text-pampas mb-2">
-                    Output Schema
-                  </h3>
-                  <div className="relative">
-                    {outputSchema ? (
-                      <CodeBlock
-                        code={JSON.stringify(outputSchema, null, 2)}
-                        onCopy={handleCopyOutputSchema}
-                      />
-                    ) : (
-                      <p className="text-sm text-pampas/60">Schema unavailable.</p>
-                    )}
-                  </div>
+                  <p className="text-xs font-semibold uppercase tracking-widest text-pampas/40 mb-2">Output schema</p>
+                  {outputSchema ? (
+                    <CodeBlock code={JSON.stringify(outputSchema, null, 2)} onCopy={handleCopyOutputSchema} />
+                  ) : (
+                    <p className="text-sm text-pampas/60">Schema unavailable.</p>
+                  )}
                 </div>
               </TabsContent>
 

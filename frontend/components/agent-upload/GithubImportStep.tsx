@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useAuth, useClerk } from "@clerk/nextjs"
 import { Loader2, Github, Link2, PlugZap } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,6 +24,8 @@ interface GithubImportStepProps {
   onConnectGitHub?: () => void
   onRefreshGitHubRepos?: () => void
   onSelectGitHubRepo?: (repo: GitHubRepoSummary) => void
+  onImportSelectedRepo?: () => void
+  isConnectingGitHub?: boolean
 }
 
 export function GithubImportStep({
@@ -41,13 +44,17 @@ export function GithubImportStep({
   onConnectGitHub,
   onRefreshGitHubRepos,
   onSelectGitHubRepo,
+  onImportSelectedRepo,
+  isConnectingGitHub = false,
 }: GithubImportStepProps) {
+  const { isSignedIn, isLoaded: clerkLoaded } = useAuth()
+  const { openSignIn } = useClerk()
   const [showPasteUrl, setShowPasteUrl] = React.useState(false)
   const connectionState = githubConnectionState ?? {
     provider: "github" as const,
     status: "disconnected" as const,
-    message: "OAuth scaffolding only. Paste URL remains the active import path for now.",
-    oauth_configured: false,
+    message: "Connect GitHub to this app, then refresh this list.",
+    oauth_configured: true,
   }
   const stages = [
     "Connecting to repository",
@@ -67,10 +74,10 @@ export function GithubImportStep({
             </div>
             <h2 className="font-headline text-3xl text-pampas">Import from a repository</h2>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-pampas/68">
-              Connect GitHub will become the primary path here. Paste URL stays available below as the current active fallback.
+              Listing uses the GitHub account linked to your signed-in profile (Clerk). Paste URL stays available below as the fallback for public repositories.
             </p>
           </div>
-          <div className="text-xs text-pampas/48">This step now exposes safe extension points for future OAuth and repo selection.</div>
+          <div className="text-xs text-pampas/48">Repository selection still feeds into the same import, parsing, and review flow.</div>
         </div>
 
         <div className="mt-6 rounded-[24px] border border-rock-blue/14 bg-kilamanjaro/38 p-5 shadow-[inset_0_1px_0_rgba(240,237,232,0.04)]">
@@ -81,22 +88,42 @@ export function GithubImportStep({
               </p>
               <h3 className="mt-2 text-2xl font-semibold text-pampas">Connect GitHub</h3>
               <p className="mt-2 max-w-2xl text-sm leading-relaxed text-pampas/60">
-                Select a repository from your GitHub account once OAuth and repo listing are wired. This pass only adds the integration boundary.
+                Opens your account profile: under Connected accounts, link GitHub, then use Refresh in the picker to load repositories.
               </p>
             </div>
-            <Button
-              onClick={onConnectGitHub}
-              disabled
-              className="min-w-44"
-              title="Scaffold only. OAuth is not wired yet."
-            >
-              <PlugZap className="mr-2 h-4 w-4" />
-              Connect GitHub
-            </Button>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              {!clerkLoaded ? (
+                <Button type="button" disabled variant="secondary" className="min-w-44">
+                  …
+                </Button>
+              ) : !isSignedIn ? (
+                <Button type="button" className="min-w-44" onClick={() => openSignIn({})}>
+                  Sign in
+                </Button>
+              ) : null}
+              <Button
+                onClick={onConnectGitHub}
+                disabled={
+                  !clerkLoaded ||
+                  !isSignedIn ||
+                  isConnectingGitHub ||
+                  connectionState.status === "connecting"
+                }
+                className="min-w-44"
+                title={!isSignedIn ? "Sign in first, then connect GitHub from your profile." : undefined}
+              >
+                <PlugZap className="mr-2 h-4 w-4" />
+                {isConnectingGitHub || connectionState.status === "connecting" ? "Connecting..." : "Connect GitHub"}
+              </Button>
+            </div>
           </div>
 
           <div className="mt-4 rounded-2xl border border-rock-blue/12 bg-pampas/[0.04] px-4 py-3 text-sm text-pampas/56">
-            {connectionState.message || "GitHub OAuth will connect here later."}
+            {!clerkLoaded
+              ? "Checking sign-in…"
+              : !isSignedIn
+                ? "Sign in with the button above, then use Connect GitHub to open your profile and link GitHub under Connected accounts."
+                : connectionState.message || "Connect GitHub to load repositories."}
           </div>
 
           <div className="mt-4">
@@ -104,11 +131,38 @@ export function GithubImportStep({
               repos={githubRepos}
               isLoading={githubReposLoading}
               error={githubReposError}
+              emptyStateHint={
+                githubRepos.length === 0 && !githubReposLoading
+                  ? connectionState.message || undefined
+                  : undefined
+              }
               selectedRepo={selectedGitHubRepo}
               onSelectRepo={onSelectGitHubRepo || (() => {})}
               onRefresh={onRefreshGitHubRepos}
             />
           </div>
+
+          {selectedGitHubRepo && (
+            <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-rock-blue/12 bg-pampas/[0.04] p-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-pampas/46">Selected repository</p>
+                <p className="mt-2 text-sm text-pampas">{selectedGitHubRepo.full_name}</p>
+                <p className="mt-1 text-xs text-pampas/48">{selectedGitHubRepo.html_url}</p>
+                {selectedGitHubRepo.private && (
+                  <p className="mt-2 text-xs text-amber-200">
+                    Private repo selected. Listing is supported, but the current parser still only imports public repos.
+                  </p>
+                )}
+              </div>
+              <Button
+                onClick={onImportSelectedRepo}
+                disabled={!onImportSelectedRepo || Boolean(selectedGitHubRepo.private) || isLoading}
+                className="min-w-52"
+              >
+                Import Selected Repository
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className="mt-6 flex items-center justify-start">

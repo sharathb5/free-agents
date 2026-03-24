@@ -1,13 +1,16 @@
 "use client"
 
 import * as React from "react"
+import { Suspense } from "react"
 import { Plus, Search } from "lucide-react"
 import Link from "next/link"
+import { useSearchParams } from "next/navigation"
 import { Input } from "@/components/ui/input"
 import { AgentCard } from "@/components/AgentCard"
 import { AgentDetailModal } from "@/components/AgentDetailModal"
 import { Toast } from "@/components/ui/toast"
 import { Button } from "@/components/ui/button"
+import { getClerkSessionToken } from "@/lib/agent-upload"
 import {
   Dialog,
   DialogContent,
@@ -16,11 +19,30 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { CodeBlock } from "@/components/CodeBlock"
-import { Card } from "@/components/ui/card"
-import { SignInButton, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/nextjs"
+import { useAuth } from "@clerk/nextjs"
+import { ClerkHeaderAuth } from "@/components/ClerkHeaderAuth"
 import { AgentSummary, Primitive } from "@/lib/agents"
 
-export default function MarketplacePage() {
+function agentPayloadToSummary(data: Record<string, unknown>): AgentSummary {
+  return {
+    id: String(data.id ?? ""),
+    version: data.version != null ? String(data.version) : undefined,
+    name: String(data.name || data.id || ""),
+    description: String(data.description || ""),
+    primitive: data.primitive as Primitive,
+    tags: Array.isArray(data.tags) ? (data.tags as string[]) : [],
+    supports_memory: Boolean(data.supports_memory),
+    credits:
+      data.credits && typeof data.credits === "object"
+        ? (data.credits as AgentSummary["credits"])
+        : undefined,
+    created_at: typeof data.created_at === "number" ? data.created_at : undefined,
+  }
+}
+
+function MarketplacePageContent() {
+  const searchParams = useSearchParams()
+  const deepLinkHandledKeyRef = React.useRef<string | null>(null)
   const { isSignedIn, getToken } = useAuth()
   const [searchQuery, setSearchQuery] = React.useState("")
   const [selectedPrimitive, setSelectedPrimitive] = React.useState<Primitive | "all">("all")
@@ -85,9 +107,7 @@ export default function MarketplacePage() {
             setOwnedIds(new Set())
             return
           }
-          const token = await getToken({
-            template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
-          })
+          const token = await getClerkSessionToken({ getToken })
           if (!token) {
             setAgents([])
             setAgentsError("Missing session token. Please sign in again.")
@@ -137,13 +157,11 @@ export default function MarketplacePage() {
               // Ignore storage errors
             }
             if (isSignedIn) {
-              try {
-                const token = await getToken({
-                  template: process.env.NEXT_PUBLIC_CLERK_JWT_TEMPLATE || undefined,
-                })
-                if (token) {
-                  const mineRes = await fetch(`${GATEWAY_URL}/agents/mine?include_archived=true`, {
-                    headers: { Authorization: `Bearer ${token}` },
+            try {
+              const token = await getClerkSessionToken({ getToken })
+              if (token) {
+                const mineRes = await fetch(`${GATEWAY_URL}/agents/mine?include_archived=true`, {
+                  headers: { Authorization: `Bearer ${token}` },
                   })
                   const mineData = await mineRes.json()
                   if (mineRes.ok && Array.isArray(mineData?.agents)) {
@@ -182,6 +200,55 @@ export default function MarketplacePage() {
   React.useEffect(() => {
     loadAgents()
   }, [loadAgents])
+
+  React.useEffect(() => {
+    const agentId = searchParams.get("agent")?.trim()
+    if (!agentId) {
+      deepLinkHandledKeyRef.current = null
+      return
+    }
+    const version = (searchParams.get("version") || "").trim()
+    const key = `${agentId}\0${version}`
+    if (deepLinkHandledKeyRef.current === key) return
+
+    const openFromList = () => {
+      const fromList = agents.find(
+        (a) => a.id === agentId && (!version || (a.version || "") === version)
+      )
+      if (fromList) {
+        setSelectedAgent(fromList)
+        setIsModalOpen(true)
+        deepLinkHandledKeyRef.current = key
+        return true
+      }
+      return false
+    }
+
+    if (openFromList()) return
+
+    if (agentsLoading) return
+
+    let cancelled = false
+    ;(async () => {
+      const q = version ? `?version=${encodeURIComponent(version)}` : ""
+      try {
+        const res = await fetch(`${GATEWAY_URL}/agents/${encodeURIComponent(agentId)}${q}`)
+        const data = (await res.json().catch(() => null)) as Record<string, unknown> | null
+        if (cancelled || !res.ok || !data || typeof data !== "object" || !data.id) {
+          deepLinkHandledKeyRef.current = key
+          return
+        }
+        setSelectedAgent(agentPayloadToSummary(data))
+        setIsModalOpen(true)
+        deepLinkHandledKeyRef.current = key
+      } catch {
+        deepLinkHandledKeyRef.current = key
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams, agents, agentsLoading, GATEWAY_URL])
 
   React.useEffect(() => {
     if (showMine) return
@@ -240,17 +307,8 @@ export default function MarketplacePage() {
               <div className="inline-flex w-fit items-center gap-2 rounded-full border border-rock-blue/18 bg-pampas/6 px-3 py-1 text-xs font-semibold tracking-[0.18em] text-pampas/75">
                 LOCAL AGENT MARKETPLACE
               </div>
-              <div className="flex items-center gap-3">
-                <SignedOut>
-                  <SignInButton>
-                    <button className="rounded-full border border-rock-blue/20 bg-pampas/8 px-4 py-2 text-xs font-semibold tracking-[0.18em] text-pampas/75 uppercase">
-                      Sign in
-                    </button>
-                  </SignInButton>
-                </SignedOut>
-                <SignedIn>
-                  <UserButton afterSignOutUrl="/" />
-                </SignedIn>
+              <div className="flex min-h-[2.25rem] items-center gap-3">
+                <ClerkHeaderAuth variant="hero" />
               </div>
             </div>
 
@@ -293,19 +351,7 @@ export default function MarketplacePage() {
               />
             </div>
             <div className="flex flex-wrap gap-2 md:justify-end">
-              <SignedOut>
-                <SignInButton>
-                  <button
-                    className={[
-                      "h-10 rounded-full px-4 text-sm font-medium transition-all border",
-                      "bg-pampas/5 text-pampas/75 border-rock-blue/15 hover:bg-pampas/8 hover:text-pampas",
-                    ].join(" ")}
-                  >
-                    Sign in
-                  </button>
-                </SignInButton>
-              </SignedOut>
-              <SignedIn>
+              {isSignedIn ? (
                 <button
                   onClick={() => setShowMine((prev) => !prev)}
                   className={[
@@ -317,7 +363,9 @@ export default function MarketplacePage() {
                 >
                   By you
                 </button>
-              </SignedIn>
+              ) : (
+                <ClerkHeaderAuth variant="toolbar" />
+              )}
               {showMine && (
                 <button
                   onClick={() => setShowArchived((prev) => !prev)}
@@ -550,5 +598,19 @@ export default function MarketplacePage() {
         onClose={() => setShowToast(false)}
       />
     </div>
+  )
+}
+
+export default function MarketplacePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen selection-palette bg-kilamanjaro flex items-center justify-center text-pampas/60 text-sm">
+          Loading…
+        </div>
+      }
+    >
+      <MarketplacePageContent />
+    </Suspense>
   )
 }
