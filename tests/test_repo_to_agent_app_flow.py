@@ -22,7 +22,12 @@ from app.repo_to_agent.templates import (
 @patch("app.repo_to_agent.app_flow.run_specialist_with_internal_runner")
 def test_run_repo_to_agent_internal_returns_result(mock_runner: object) -> None:
     """run_repo_to_agent(..., execution_backend='internal') returns RepoToAgentResult."""
-    def fake_runner(template: object, input_payload: object, step_telemetry: object | None = None) -> dict:
+    def fake_runner(
+        template: object,
+        input_payload: object,
+        step_telemetry: object | None = None,
+        **kwargs: object,
+    ) -> dict:
         tid = getattr(template, "id", "")
         if tid == "repo_scout":
             return {

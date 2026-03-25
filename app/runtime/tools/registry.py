@@ -31,6 +31,8 @@ class RunContext:
     preset: Preset
     tools_enabled: bool
     max_tool_calls: int
+    # Per-user OAuth token (e.g. Clerk-linked GitHub) or None to use GITHUB_TOKEN / anonymous.
+    github_access_token: Optional[str] = None
     tool_calls_used: int = 0
     # Resolved allowed tools for this agent (e.g. ["http_request"])
     allowed_tools: List[str] = field(default_factory=list)
@@ -111,7 +113,7 @@ class DefaultToolRegistry:
                 allowed_repos=allowed_repos,
                 include_hidden_files=include_hidden_files,
             )
-            github_client = DefaultGithubClient()
+            github_client = DefaultGithubClient(token=run_context.github_access_token)
             return execute_github_repo_read(args, policy, github_client)
 
         raise ToolExecutionError(f"unknown tool: {tool_name}")
@@ -122,6 +124,7 @@ def build_run_context(
     preset: Preset,
     tools_enabled: Optional[bool] = None,
     max_tool_calls: Optional[int] = None,
+    github_access_token: Optional[str] = None,
 ) -> RunContext:
     """Build RunContext from preset and settings. Uses resolved_execution_limits when present."""
     settings = get_settings()
@@ -143,6 +146,7 @@ def build_run_context(
         preset=preset,
         tools_enabled=tools_enabled,
         max_tool_calls=effective_max_tool_calls,
+        github_access_token=github_access_token,
         tool_calls_used=0,
         allowed_tools=list(allowed_tools),
         http_allowed_domains=list(http_allowed_domains),

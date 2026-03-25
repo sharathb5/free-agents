@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.preset_loader import Preset
 from app.runtime.tools.registry import (
@@ -358,6 +358,8 @@ def run_specialist_with_internal_runner(
     template: AgentTemplate,
     input_payload: Dict[str, Any],
     step_telemetry: Dict[str, Any] | None = None,
+    *,
+    github_token: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Execute a single specialist using the internal (non-OpenAI) backend.
@@ -391,7 +393,7 @@ def run_specialist_with_internal_runner(
             raise ValueError("repo_scout input must include owner and repo")
         preset = _template_to_preset(template)
         run_id = f"internal-{uuid.uuid4().hex[:12]}"
-        run_context = build_run_context(run_id=run_id, preset=preset)
+        run_context = build_run_context(run_id=run_id, preset=preset, github_access_token=github_token)
         registry: DefaultToolRegistry = DefaultToolRegistry()
         overview = _run_github_repo_read(registry, run_context, owner, repo, ref, "overview")
         sample = _run_github_repo_read(registry, run_context, owner, repo, ref, "sample")
@@ -405,7 +407,7 @@ def run_specialist_with_internal_runner(
             raise ValueError("repo_architect input must include owner and repo")
         preset = _template_to_preset(template)
         run_id = f"internal-{uuid.uuid4().hex[:12]}"
-        run_context = build_run_context(run_id=run_id, preset=preset)
+        run_context = build_run_context(run_id=run_id, preset=preset, github_access_token=github_token)
         registry = DefaultToolRegistry()
         overview = _run_github_repo_read(registry, run_context, owner, repo, ref, "overview")
         top_tree = _run_github_repo_read(registry, run_context, owner, repo, ref, "tree", path="")
@@ -481,7 +483,7 @@ def run_specialist_with_internal_runner(
         )
         preset = _template_to_preset(template)
         run_id = f"internal-{uuid.uuid4().hex[:12]}"
-        run_context = build_run_context(run_id=run_id, preset=preset)
+        run_context = build_run_context(run_id=run_id, preset=preset, github_access_token=github_token)
         registry: DefaultToolRegistry = DefaultToolRegistry()
         file_contents: Dict[str, str] = {}
         for path in file_paths:
@@ -559,7 +561,7 @@ def run_specialist_with_internal_runner(
         file_contents: Dict[str, str] = {}
         preset = _template_to_preset(template)
         run_id = f"internal-{uuid.uuid4().hex[:12]}"
-        run_context = build_run_context(run_id=run_id, preset=preset)
+        run_context = build_run_context(run_id=run_id, preset=preset, github_access_token=github_token)
         registry = DefaultToolRegistry()
         for path in code_paths:
             try:

@@ -492,14 +492,22 @@ export async function getClerkSessionToken(args: {
   return args.getToken()
 }
 
-export async function startRepoImport(url: string) {
+export async function startRepoImport(args: {
+  url: string
+  getToken: (options?: { template?: string }) => Promise<string | null>
+}) {
   const execution_backend =
     (process.env.NEXT_PUBLIC_REPO_TO_AGENT_BACKEND || "").trim() || "internal"
+  const token = await getClerkSessionToken({ getToken: args.getToken })
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
   return parseJsonResponse<RepoRunResponse>(
     await fetch(`${GATEWAY_URL}/repo-to-agent/`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, execution_backend }),
+      headers,
+      body: JSON.stringify({ url: args.url, execution_backend }),
     }),
     "Failed to start repository import"
   )

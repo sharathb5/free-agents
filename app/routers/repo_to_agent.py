@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from app.config import get_settings
+from app.dependencies import AuthError, enforce_auth, require_clerk_user_id
 from app.engine import new_request_id
 from app.repo_to_agent.app_flow import run_repo_to_agent
+from app.routers.github import _fetch_clerk_github_access_token
 from app.storage import run_store
 
 logger = logging.getLogger("agent-gateway")
@@ -61,8 +64,34 @@ def _agents_error(status_code: int, code: str, message: str, details: list | Non
 async def create_repo_to_agent_run(request: Request) -> JSONResponse:
     """
     Start a repo-to-agent run asynchronously. Body: owner, repo, ref?, url?, execution_backend?.
+
+    When Clerk is configured, requires a valid session token so the gateway can use the user's
+    GitHub OAuth token (higher API limits). Otherwise falls back to GITHUB_TOKEN or anonymous.
+
     Returns run_id and status "queued". Poll GET /runs/{run_id} and GET /runs/{run_id}/result.
     """
+    settings = get_settings()
+    github_token_for_run: Optional[str] = None
+    if settings.auth_token:
+        try:
+            enforce_auth(request)
+        except AuthError as exc:
+            return _agents_error(401, "UNAUTHORIZED", str(exc))
+    elif settings.clerk_jwks_url or settings.clerk_jwt_key:
+        try:
+            user_id = require_clerk_user_id(request)
+        except AuthError as exc:
+            return _agents_error(401, "UNAUTHORIZED", str(exc))
+        try:
+            tok, _ = await _fetch_clerk_github_access_token(user_id=user_id)
+            github_token_for_run = tok
+            if not tok:
+                logger.info(
+                    "repo-to-agent: no Clerk GitHub OAuth token for user (connect GitHub in Clerk); "
+                    "using GITHUB_TOKEN or anonymous GitHub API"
+                )
+        except Exception as exc:
+            logger.warning("repo-to-agent: Clerk GitHub token lookup failed: %s", exc)
     try:
         body = await request.json()
     except Exception:
@@ -123,7 +152,11 @@ async def create_repo_to_agent_run(request: Request) -> JSONResponse:
                 message="Starting repo-to-agent workflow",
                 data={"run_id": run_id, "execution_backend": execution_backend, "repo_input_keys": sorted(list(repo_input.keys()))},
             )
-            result = run_repo_to_agent(repo_input, execution_backend=execution_backend)
+            result = run_repo_to_agent(
+                repo_input,
+                execution_backend=execution_backend,
+                github_token=github_token_for_run,
+            )
             run_store.set_run_status(run_id, "succeeded", output_json=result.model_dump())
             discovered = getattr(result, "discovered_repo_tools", None) or []
             wrapped = getattr(result, "wrapped_repo_tools", None) or []

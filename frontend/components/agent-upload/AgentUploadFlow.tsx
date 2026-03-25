@@ -499,6 +499,14 @@ export function AgentUploadFlow() {
 
   const startGithubImportFlow = async () => {
     setImportError("")
+    if (!clerkAuthLoaded) {
+      setImportError("Loading sign-in state…")
+      return
+    }
+    if (!isSignedIn) {
+      setImportError("Sign in to import a repository. GitHub API access uses your account when you’re signed in.")
+      return
+    }
     if (!repoUrl.trim()) {
       setImportError("Enter a GitHub repository URL.")
       return
@@ -510,7 +518,7 @@ export function AgentUploadFlow() {
     try {
       setImportLoading(true)
       setImportProgressIndex(0)
-      const response = await startRepoImport(repoUrl.trim())
+      const response = await startRepoImport({ url: repoUrl.trim(), getToken })
       setRepoRunId(response.run_id)
     } catch (error) {
       setImportLoading(false)
@@ -552,6 +560,14 @@ export function AgentUploadFlow() {
       setImportError("Select a repository first.")
       return
     }
+    if (!clerkAuthLoaded) {
+      setImportError("Loading sign-in state…")
+      return
+    }
+    if (!isSignedIn) {
+      setImportError("Sign in to import a repository. GitHub API access uses your account when you’re signed in.")
+      return
+    }
     if (selectedGitHubRepo.private) {
       setImportError("Private repo import is not enabled in the current parser path yet.")
       return
@@ -561,7 +577,10 @@ export function AgentUploadFlow() {
     try {
       setImportLoading(true)
       setImportProgressIndex(0)
-      const response = await startRepoImport(githubRepoToImportUrl(selectedGitHubRepo))
+      const response = await startRepoImport({
+        url: githubRepoToImportUrl(selectedGitHubRepo),
+        getToken,
+      })
       setRepoRunId(response.run_id)
     } catch (error) {
       setImportLoading(false)

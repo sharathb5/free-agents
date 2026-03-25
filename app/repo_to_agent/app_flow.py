@@ -8,8 +8,9 @@ and returns a RepoToAgentResult. Kept thin so an OpenAI backend can be added lat
 from __future__ import annotations
 
 import concurrent.futures
+import functools
 import os
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from .exceptions import is_should_fallback_to_internal, StepTimeoutError
 from .internal_runner import run_specialist_with_internal_runner
@@ -32,6 +33,8 @@ def _import_async_openai_client() -> Any:
 def run_repo_to_agent(
     repo_input: Dict[str, Any],
     execution_backend: str = "internal",
+    *,
+    github_token: Optional[str] = None,
 ) -> RepoToAgentResult:
     """
     Run the full repo-to-agent workflow and return an aggregated result.
@@ -43,7 +46,7 @@ def run_repo_to_agent(
     Returns RepoToAgentResult suitable for persistence and review flows.
     """
     if execution_backend == "internal":
-        runner = run_specialist_with_internal_runner
+        runner = functools.partial(run_specialist_with_internal_runner, github_token=github_token)
         return generate_agent_from_repo(repo_input, runner)
 
     if execution_backend == "openai":
@@ -71,6 +74,7 @@ def run_repo_to_agent(
                 "repo_architect": lambda: run_specialist_with_openai_agent(template, input_payload, client, step_telemetry),
                 "agent_designer": lambda: run_specialist_with_openai_agent(template, input_payload, client, step_telemetry),
             }
+            _internal = functools.partial(run_specialist_with_internal_runner, github_token=github_token)
             if tid in openai_runners:
                 # Large-repo routing rule: for architect, bypass OpenAI when the
                 # scout summary already indicates a very large/broad repo.
@@ -88,7 +92,7 @@ def run_repo_to_agent(
                                 step_telemetry["fallback_triggered"] = False
                             note = "repo_architect ran via internal runner due to large repo routing rule"
                             return (
-                                run_specialist_with_internal_runner(
+                                _internal(
                                     template, input_payload, step_telemetry
                                 ),
                                 [note],
@@ -112,9 +116,9 @@ def run_repo_to_agent(
                             step_telemetry["backend_used"] = "internal"
                         reason = "step timeout" if isinstance(exc, StepTimeoutError) else "max turns exceeded"
                         fallback_note = f"{tid} used internal fallback ({reason})"
-                        return run_specialist_with_internal_runner(template, input_payload, step_telemetry), [fallback_note]
+                        return _internal(template, input_payload, step_telemetry), [fallback_note]
                     raise
-            return run_specialist_with_internal_runner(template, input_payload, step_telemetry)
+            return _internal(template, input_payload, step_telemetry)
 
         return generate_agent_from_repo(repo_input, runner)
 

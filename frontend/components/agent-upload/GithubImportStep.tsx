@@ -180,6 +180,11 @@ export function GithubImportStep({
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-pampas/48">
               Or paste a public repo URL
             </p>
+            {clerkLoaded && !isSignedIn && (
+              <p className="mt-2 text-sm text-amber-200/90">
+                Sign in before starting import—the gateway uses your session to access GitHub with normal rate limits.
+              </p>
+            )}
             <div className="mt-3 flex flex-col gap-3 md:flex-row">
               <div className="relative flex-1">
                 <Link2 className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-pampas/38" />
@@ -191,7 +196,12 @@ export function GithubImportStep({
                   disabled={isLoading}
                 />
               </div>
-              <Button onClick={onStartImport} disabled={isLoading || !repoUrl.trim()} className="min-w-40">
+              <Button
+                onClick={onStartImport}
+                disabled={isLoading || !repoUrl.trim() || !clerkLoaded || !isSignedIn}
+                className="min-w-40"
+                title={!isSignedIn ? "Sign in to start import" : undefined}
+              >
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

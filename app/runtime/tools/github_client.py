@@ -56,11 +56,26 @@ def _get_token() -> Optional[str]:
     return os.environ.get("GITHUB_TOKEN") or None
 
 
-def _headers() -> Dict[str, str]:
+def _effective_token(token_override: Optional[str]) -> Optional[str]:
+    """Prefer per-request OAuth/PAT (e.g. Clerk-linked GitHub); else server GITHUB_TOKEN."""
+    if token_override and str(token_override).strip():
+        return str(token_override).strip()
+    return _get_token()
+
+
+def _authorization_value(token: str) -> str:
+    """GitHub accepts classic PATs as `token` and OAuth tokens as `Bearer`."""
+    t = token.strip()
+    if t.startswith("ghp_") or t.startswith("github_pat_"):
+        return f"token {t}"
+    return f"Bearer {t}"
+
+
+def _headers(token_override: Optional[str] = None) -> Dict[str, str]:
     h: Dict[str, str] = {"Accept": ACCEPT, "User-Agent": "free-agents/1.0"}
-    token = _get_token()
+    token = _effective_token(token_override)
     if token:
-        h["Authorization"] = f"token {token}"
+        h["Authorization"] = _authorization_value(token)
     return h
 
 
@@ -85,7 +100,10 @@ def _check_response(resp: httpx.Response, context: str) -> None:
     if resp.status_code == 401:
         raise GithubClientError("GitHub authentication required or invalid credentials")
     if resp.status_code == 403 and "rate limit" in (msg or "").lower():
-        raise GithubClientError("GitHub rate limit exceeded")
+        raise GithubClientError(
+            "GitHub rate limit exceeded. Sign in, connect GitHub to your account, and retry "
+            "(or set GITHUB_TOKEN on the server for higher limits)."
+        )
     if resp.status_code == 404:
         if "not found" in (msg or "").lower() or "Not Found" in (msg or ""):
             raise GithubClientError("Repository or resource not found")
@@ -99,14 +117,20 @@ def _check_response(resp: httpx.Response, context: str) -> None:
     raise GithubClientError(f"{context}: request failed (HTTP {resp.status_code})")
 
 
-def get_repo(owner: str, repo: str, timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+def get_repo(
+    owner: str,
+    repo: str,
+    timeout: float = DEFAULT_TIMEOUT,
+    *,
+    token: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Fetch repository metadata. Read-only.
     Returns dict with keys such as default_branch, private, name, full_name.
     """
     url = f"{API_BASE}/repos/{owner}/{repo}"
     with httpx.Client(timeout=timeout) as client:
-        resp = client.get(url, headers=_headers())
+        resp = client.get(url, headers=_headers(token))
     _check_response(resp, "get_repo")
     data = resp.json()
     if not isinstance(data, dict):
@@ -114,9 +138,15 @@ def get_repo(owner: str, repo: str, timeout: float = DEFAULT_TIMEOUT) -> Dict[st
     return data
 
 
-def get_default_branch(owner: str, repo: str, timeout: float = DEFAULT_TIMEOUT) -> str:
+def get_default_branch(
+    owner: str,
+    repo: str,
+    timeout: float = DEFAULT_TIMEOUT,
+    *,
+    token: Optional[str] = None,
+) -> str:
     """Return the default branch name for the repository."""
-    data = get_repo(owner, repo, timeout=timeout)
+    data = get_repo(owner, repo, timeout=timeout, token=token)
     branch = data.get("default_branch")
     if not isinstance(branch, str) or not branch.strip():
         raise GithubClientError("Repository has no default branch")
@@ -129,6 +159,8 @@ def get_tree(
     ref: str,
     path: Optional[str] = None,
     timeout: float = DEFAULT_TIMEOUT,
+    *,
+    token: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     List contents at a path (or repo root). Read-only.
@@ -142,7 +174,7 @@ def get_tree(
         # Root: use Git Trees API
         commit_url = f"{API_BASE}/repos/{owner}/{repo}/commits/{ref}"
         with httpx.Client(timeout=timeout) as client:
-            resp = client.get(commit_url, headers=_headers())
+            resp = client.get(commit_url, headers=_headers(token))
         _check_response(resp, "get_tree")
         commit_data = resp.json()
         if not isinstance(commit_data, dict):
@@ -154,7 +186,7 @@ def get_tree(
             raise GithubClientError("Could not resolve tree for ref")
         tree_url = f"{API_BASE}/repos/{owner}/{repo}/git/trees/{tree_sha}"
         with httpx.Client(timeout=timeout) as client:
-            resp = client.get(tree_url, headers=_headers())
+            resp = client.get(tree_url, headers=_headers(token))
         _check_response(resp, "get_tree")
         tree_data = resp.json()
         if not isinstance(tree_data, dict):
@@ -175,7 +207,7 @@ def get_tree(
     # Non-root: use Contents API (directory listing)
     contents_url = f"{API_BASE}/repos/{owner}/{repo}/contents/{path}"
     with httpx.Client(timeout=timeout) as client:
-        resp = client.get(contents_url, headers=_headers(), params={"ref": ref})
+        resp = client.get(contents_url, headers=_headers(token), params={"ref": ref})
     _check_response(resp, "get_tree")
     contents = resp.json()
     if isinstance(contents, dict):
@@ -200,6 +232,8 @@ def get_file(
     path: str,
     ref: Optional[str] = None,
     timeout: float = DEFAULT_TIMEOUT,
+    *,
+    token: Optional[str] = None,
 ) -> tuple[str, str]:
     """
     Fetch raw file content and encoding. Read-only.
@@ -211,10 +245,10 @@ def get_file(
     if not path:
         raise GithubClientError("Invalid file path")
     if ref is None or not ref.strip():
-        ref = get_default_branch(owner, repo, timeout=timeout)
+        ref = get_default_branch(owner, repo, timeout=timeout, token=token)
     url = f"{API_BASE}/repos/{owner}/{repo}/contents/{path}"
     with httpx.Client(timeout=timeout) as client:
-        resp = client.get(url, headers=_headers(), params={"ref": ref})
+        resp = client.get(url, headers=_headers(token), params={"ref": ref})
     _check_response(resp, "get_file")
     data = resp.json()
     if not isinstance(data, dict):
@@ -238,14 +272,15 @@ def get_file(
 class DefaultGithubClient:
     """Default client that calls module-level functions. Implements GithubClientLike."""
 
-    def __init__(self, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(self, timeout: float = DEFAULT_TIMEOUT, token: Optional[str] = None):
         self.timeout = timeout
+        self._token = token
 
     def get_repo(self, owner: str, repo: str) -> Dict[str, Any]:
-        return get_repo(owner, repo, timeout=self.timeout)
+        return get_repo(owner, repo, timeout=self.timeout, token=self._token)
 
     def get_default_branch(self, owner: str, repo: str) -> str:
-        return get_default_branch(owner, repo, timeout=self.timeout)
+        return get_default_branch(owner, repo, timeout=self.timeout, token=self._token)
 
     def get_tree(
         self,
@@ -254,7 +289,7 @@ class DefaultGithubClient:
         ref: str,
         path: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        return get_tree(owner, repo, ref, path=path, timeout=self.timeout)
+        return get_tree(owner, repo, ref, path=path, timeout=self.timeout, token=self._token)
 
     def get_file(
         self,
@@ -263,4 +298,4 @@ class DefaultGithubClient:
         path: str,
         ref: Optional[str] = None,
     ) -> tuple[str, str]:
-        return get_file(owner, repo, path, ref=ref, timeout=self.timeout)
+        return get_file(owner, repo, path, ref=ref, timeout=self.timeout, token=self._token)
