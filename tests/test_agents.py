@@ -3,7 +3,7 @@ Agent Registry API tests.
 
 Spec: docs/target-functionality-spec.md
 - R1: GET /agents → 200, body { "agents": [ ... ] }; each summary has id, name, description, primitive, supports_memory.
-- R2: GET /agents/{id} → 200 with full details; 404 for unknown id with error envelope (NOT_FOUND).
+- R2: GET /agents/{id} → 200 with full details; 404 for unknown id with error envelope (AGENT_NOT_FOUND).
 - R3: Same error-envelope and request_id pattern as session routes.
 
 Acceptance T1–T5: list returns 200 + agents array; at least one agent with required fields;
@@ -105,7 +105,7 @@ def test_get_agents_id_returns_200_for_valid_id(client: TestClient) -> None:
 
 def test_get_agents_id_returns_404_for_unknown_id(client: TestClient) -> None:
     """
-    T4: For id that does not exist, status 404; body has error code (e.g. NOT_FOUND) and message; R3 request_id in meta.
+    T4: For id that does not exist, status 404; body has error code AGENT_NOT_FOUND and message; R3 request_id in meta.
     """
     resp = client.get("/agents/nonexistent-preset-123")
     assert resp.status_code == 404
@@ -114,7 +114,7 @@ def test_get_agents_id_returns_404_for_unknown_id(client: TestClient) -> None:
     assert "meta" in data
     error = data["error"]
     meta = data["meta"]
-    assert error.get("code") == "NOT_FOUND"
+    assert error.get("code") == "AGENT_NOT_FOUND"
     assert "message" in error
     assert isinstance(meta.get("request_id"), str), "R3: error envelope must include meta.request_id"
 

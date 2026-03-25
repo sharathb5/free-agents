@@ -111,11 +111,11 @@ def test_internal_runner_agent_designer_primitive_varies_by_repo_type() -> None:
 
 
 def test_bundle_bias_matches_repo_type_when_scores_close() -> None:
-    # docs/tutorial should prefer no_tools_writer
+    # docs/tutorial repos still go through repo-to-agent flow; prefer repo_to_agent over writer.
     docs_scout = {"repo_summary": "Docs-heavy tutorial.", "important_files": ["README.md", "docs/guide.md"], "language_hints": [], "framework_hints": []}
     docs_arch = {"languages": [], "frameworks": [], "services": [], "entrypoints": [], "integrations": [], "key_paths": ["docs/", "README.md"]}
     out_docs = discover_tools_from_repo(docs_scout, docs_arch)
-    assert out_docs["bundle_id"] == "no_tools_writer"
+    assert out_docs["bundle_id"] == "repo_to_agent"
 
     # automation scripts should prefer repo_to_agent (best available bundle today)
     auto_scout = {"repo_summary": "Automation scripts.", "important_files": ["scripts/run.py", "Makefile"], "language_hints": ["Python"], "framework_hints": []}

@@ -60,7 +60,7 @@ def test_discover_tools_docs_heavy_dead_zone_avoids_empty_bundle() -> None:
         "key_paths": ["docs/", "README.md"],
     }
     out = discover_tools_from_repo(scout, arch)
-    assert out["bundle_id"] == "no_tools_writer"
+    assert out["bundle_id"] == "repo_to_agent"
     assert "github_repo_read" in out["additional_tools"]
 
     debug = out["debug"]

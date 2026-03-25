@@ -213,11 +213,11 @@ def discover_tools_from_repo(
     # Bias bundle choice based on repo_type when scores are close.
     # This avoids "generic fallback everywhere" without overriding strong evidence.
     target_by_repo_type = {
-        "docs_tutorial": "no_tools_writer",
+        "docs_tutorial": "repo_to_agent",
         "automation_scripts": "repo_to_agent",
         "explicit_agent": "repo_to_agent",
         "agent_framework": "repo_to_agent",
-        "library_framework": "github_reader",
+        "library_framework": "repo_to_agent",
     }
     target = target_by_repo_type.get(repo_type_result.repo_type)
     # Release/workflow repos can look docs-heavy (e.g. CHANGELOG + workflows)

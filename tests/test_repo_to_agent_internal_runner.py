@@ -40,7 +40,13 @@ def _canned_sample() -> Dict[str, Any]:
     return {
         "mode": "sample",
         "repo": {"name": "test-repo", "owner": "test-owner"},
-        "files": [{"path": "README.md", "content": "# Test", "truncated": False}],
+        "files": [
+            {
+                "path": "README.md",
+                "content": "# Test\n\nSample Python API used by internal runner tests.",
+                "truncated": False,
+            }
+        ],
         "important_files": ["README.md", "src/main.py"],
         "hints": {"languages": ["Python"], "frameworks": []},
     }
@@ -75,6 +81,8 @@ def test_run_specialist_repo_scout_returns_valid_scout_output(mock_registry_clas
 
     out = RepoScoutOutput.model_validate(result)
     assert "test-repo" in out.repo_summary
+    assert "README.md:" in out.repo_summary
+    assert "Sample Python API" in out.repo_summary
     assert out.important_files == ["README.md", "src/main.py"]
     assert "Python" in out.language_hints
     assert out.framework_hints == ["FastAPI"]

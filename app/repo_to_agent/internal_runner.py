@@ -105,6 +105,46 @@ def _run_github_repo_read(
     return registry.execute("github_repo_read", args, run_context)
 
 
+def _excerpt_for_repo_summary(text: str, *, max_chars: int = 900) -> str:
+    """First substantive paragraph from markdown-ish text, bounded (deterministic)."""
+    if not text or not isinstance(text, str):
+        return ""
+    t = text.strip()
+    lines = t.splitlines()
+    start = 0
+    if lines and lines[0].startswith("#"):
+        start = 1
+        while start < len(lines) and not lines[start].strip():
+            start += 1
+    body = "\n".join(lines[start:]).strip()
+    para = body.split("\n\n")[0] if body else ""
+    para = " ".join(para.split())
+    if len(para) > max_chars:
+        para = para[: max_chars - 1].rsplit(" ", 1)[0] + "…"
+    return para.strip()
+
+
+def _build_grounded_repo_prompt(
+    *,
+    repo_label: str,
+    summary_for_prompt: str,
+    key_paths_txt: str,
+    langs_txt: str,
+    closing: str,
+) -> str:
+    """Shared prompt body for repo-grounded agent drafts (internal designer stub)."""
+    prompt_parts = [
+        f"You are an expert assistant for the {repo_label} repository.\n",
+        f"Repository summary: {summary_for_prompt}\n",
+    ]
+    if key_paths_txt:
+        prompt_parts.append("Key files and paths:\n" + key_paths_txt + "\n")
+    if langs_txt:
+        prompt_parts.append(langs_txt + "\n")
+    prompt_parts.append("\n" + closing)
+    return "".join(prompt_parts)
+
+
 def _synthesize_repo_scout(
     overview: Dict[str, Any],
     sample: Dict[str, Any],
@@ -116,13 +156,32 @@ def _synthesize_repo_scout(
     name = repo_out.get("name") or "repo"
     languages = hints.get("languages") or []
     frameworks = hints.get("frameworks") or []
-    # Minimal deterministic summary; TODO: replace with LLM-generated summary when reasoning available.
+    # Base line from metadata; sample mode already fetched file bodies for top important files.
     summary_parts = [f"Repository: {name}"]
     if languages:
         summary_parts.append(f"Languages: {', '.join(languages)}")
     if frameworks:
         summary_parts.append(f"Frameworks: {', '.join(frameworks)}")
+    excerpt_bits: List[str] = []
+    for f in (sample or {}).get("files") or []:
+        if not isinstance(f, dict):
+            continue
+        path = str(f.get("path") or "").strip()
+        content = f.get("content")
+        if not path or not isinstance(content, str) or not content.strip():
+            continue
+        pl = path.lower()
+        ex_max = 850
+        if pl.endswith((".toml", ".yaml", ".yml")) or pl.endswith("package.json") or pl.endswith("package-lock.json"):
+            ex_max = 380
+        ex = _excerpt_for_repo_summary(content, max_chars=ex_max)
+        if ex:
+            excerpt_bits.append(f"{path}: {ex}")
+    if excerpt_bits:
+        summary_parts.append(" ".join(excerpt_bits))
     repo_summary = ". ".join(summary_parts)
+    if len(repo_summary) > 12_000:
+        repo_summary = repo_summary[:11_999] + "…"
     return {
         "repo_summary": repo_summary,
         "important_files": important,
@@ -286,23 +345,65 @@ def _stub_agent_designer(input_payload: Dict[str, Any]) -> Dict[str, Any]:
             "Help the user discover and safely use the repo's scripts/commands and typical workflows.\n"
             "Prefer explaining what to run and why, and ask for clarification when the desired automation goal is ambiguous.\n"
         )
-    elif repo_type == "docs_tutorial":
-        desc = ("Documentation/tutorial helper draft for explaining and summarizing repo content. " + langs_txt + " " + repo_type_txt).strip()
-        prompt = (
-            "You are a documentation and tutorial assistant for this repository.\n"
-            "Help the user learn the material, summarize sections, and answer questions based on the repo content.\n"
-        )
-    elif repo_type == "library_framework":
-        desc = ("Library/framework helper draft for understanding APIs, usage patterns, and architecture. " + langs_txt + " " + repo_type_txt).strip()
-        prompt = (
-            "You are a developer assistant for this library/framework repository.\n"
-            "Help the user understand the API surface, common usage, and project structure; propose examples and integration guidance.\n"
-        )
-    elif repo_type in ("explicit_agent", "agent_framework"):
-        desc = ("Agent/system repository draft focused on orchestration, tools, and workflows. " + langs_txt + " " + repo_type_txt).strip()
-        prompt = (
-            "You are an agent designer assistant for this repository.\n"
-            "Help the user understand what the agent system does, how it is structured, and how to extend or operate it.\n"
+    elif repo_type in ("docs_tutorial", "library_framework", "agent_framework", "explicit_agent"):
+        owner = str(input_payload.get("owner") or "").strip()
+        repo = str(input_payload.get("repo") or "").strip()
+        repo_label = f"{owner}/{repo}" if owner and repo else (repo or "this repository")
+
+        arch_d = architecture if isinstance(architecture, dict) else {}
+        key_paths = arch_d.get("key_paths") or []
+        if not isinstance(key_paths, list):
+            key_paths = []
+        key_paths_txt = "\n".join(f"- {p}" for p in key_paths[:10] if str(p).strip())
+        summary_for_prompt = str(repo_summary or "").strip()
+        if len(summary_for_prompt) > 6000:
+            summary_for_prompt = summary_for_prompt[:6000] + "…"
+
+        desc_by_repo_type = {
+            "docs_tutorial": (
+                "Documentation/tutorial helper draft for explaining and summarizing repo content. "
+                + langs_txt + " "
+                + repo_type_txt
+            ).strip(),
+            "library_framework": (
+                "Library/framework helper draft for understanding APIs, usage patterns, and architecture. "
+                + langs_txt + " "
+                + repo_type_txt
+            ).strip(),
+            "agent_framework": (
+                "Agent/system repository draft focused on orchestration, tools, and workflows. " + langs_txt + " " + repo_type_txt
+            ).strip(),
+            "explicit_agent": (
+                "Agent/system repository draft focused on orchestration, tools, and workflows. " + langs_txt + " " + repo_type_txt
+            ).strip(),
+        }
+        desc = desc_by_repo_type.get(repo_type, desc_by_repo_type["docs_tutorial"])
+
+        closing_by_repo_type = {
+            "docs_tutorial": (
+                "Help the user understand the codebase, explain architecture decisions, "
+                "summarize sections, and answer questions grounded in the actual repo content."
+            ),
+            "library_framework": (
+                "Help the user understand the API surface, common usage, and project structure; "
+                "propose examples and integration guidance grounded in the repo."
+            ),
+            "agent_framework": (
+                "Help the user understand what the agent system does, how it is structured, "
+                "and how to extend or operate it, grounded in the repo."
+            ),
+            "explicit_agent": (
+                "Help the user understand what the agent system does, how it is structured, "
+                "and how to extend or operate it, grounded in the repo."
+            ),
+        }
+        closing = closing_by_repo_type.get(repo_type, closing_by_repo_type["docs_tutorial"])
+        prompt = _build_grounded_repo_prompt(
+            repo_label=repo_label,
+            summary_for_prompt=summary_for_prompt,
+            key_paths_txt=key_paths_txt,
+            langs_txt=langs_txt,
+            closing=closing,
         )
     else:
         desc = (f"Draft agent for repo. {langs_txt} {repo_type_txt}".strip() if (langs_txt or repo_type_txt) else "Draft agent from repo analysis.")

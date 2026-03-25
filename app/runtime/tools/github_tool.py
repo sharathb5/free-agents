@@ -15,6 +15,9 @@ from .http_tool import ToolExecutionError
 # Deterministic order for important-file detection (top-level and common paths).
 IMPORTANT_FILE_CANDIDATES = [
     "README.md",
+    "AGENTS.md",
+    "CONCEPTS.md",
+    "CONTRIBUTING.md",
     "agent.json",
     "package.json",
     "pyproject.toml",
