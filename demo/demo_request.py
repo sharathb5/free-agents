@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Free Agents — Demo invocation script
-Sends a question to the openai-agents-python agent and prints a clean response.
+Invokes a repo-derived agent against langchain-ai/open-agent-platform and prints a clean response.
 """
 
 
@@ -16,7 +16,10 @@ GATEWAY_URL = "http://localhost:4280"
 AGENT_ID    = "draft-from-repo"
 ENDPOINT    = f"{GATEWAY_URL}/agents/{AGENT_ID}/invoke"
 
-DEFAULT_QUESTION = "How does this repository support multi-agent orchestration and tool use?"
+DEFAULT_QUESTION = (
+    "How does open-agent-platform define and expose agents, "
+    "and what does the tool registry pattern look like?"
+)
 
 DIVIDER = "─" * 56
 
@@ -40,8 +43,8 @@ def invoke(question: str) -> dict:
     payload = json.dumps({
         "input": {
             "question": question,
-            "owner": "openai",
-            "repo": "openai-agents-python",
+            "owner": "langchain-ai",
+            "repo": "open-agent-platform",
         }
     }).encode()
 
@@ -92,6 +95,7 @@ def main():
 
     print(f"\n{DIVIDER}")
     print(f"  Free Agents — Live Demo")
+    print(f"  Repo: langchain-ai/open-agent-platform")
     print(f"  POST {ENDPOINT}")
     print(f"{DIVIDER}")
     print(f"\n  Question: {question}\n")
