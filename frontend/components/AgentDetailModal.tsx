@@ -14,7 +14,8 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { CodeBlock } from "@/components/CodeBlock"
-import { AgentDetail, AgentSummary } from "@/lib/agents"
+import { OpenInIdeButtons } from "@/components/OpenInIdeButtons"
+import { AgentDetail, AgentSummary, marketplaceCardTitle } from "@/lib/agents"
 
 type DetailExtended = AgentDetail & {
   bundle?: string
@@ -23,6 +24,7 @@ type DetailExtended = AgentDetail & {
   bundle_tools?: string[]
 }
 import { getClerkSessionToken } from "@/lib/agent-upload"
+import { DEFAULT_AGENT_USE_CASES, type AgentIdeContextInput } from "@/lib/agent-ide-context"
 import { cn } from "@/lib/utils"
 import { Copy } from "lucide-react"
 import Link from "next/link"
@@ -81,6 +83,28 @@ export function AgentDetailModal({
     ? `curl -X POST ${GATEWAY_URL}/agents/${agent.id}/invoke \\\n  -H "Content-Type: application/json" \\\n  -d '${JSON.stringify({ input: effectiveInput }, null, 2)}'`
     : ""
 
+  const ideContext = React.useMemo((): AgentIdeContextInput | null => {
+    if (!agent) return null
+    const prompt =
+      detail == null
+        ? "(Loading prompt…)"
+        : typeof detail.prompt === "string" && detail.prompt.trim()
+          ? detail.prompt.trim()
+          : "(empty)"
+    const sourceRepo =
+      (detail as DetailExtended)?.source_repo ||
+      agent.tags?.find((t) => t.startsWith("repo:"))?.replace("repo:", "") ||
+      undefined
+    return {
+      prompt,
+      agentId: agent.id,
+      version: agent.version,
+      description: agent.description,
+      useCases: DEFAULT_AGENT_USE_CASES,
+      sourceRepo,
+    }
+  }, [agent, detail])
+
   React.useEffect(() => {
     if (!open || !agent) return
     let active = true
@@ -88,8 +112,9 @@ export function AgentDetailModal({
       setDetailLoading(true)
       setDetailError(null)
       try {
+        const versionQ = agent.version?.trim() ? `?version=${encodeURIComponent(agent.version.trim())}` : ""
         const [detailRes, exampleRes] = await Promise.all([
-          fetch(`${GATEWAY_URL}/agents/${agent.id}`),
+          fetch(`${GATEWAY_URL}/agents/${agent.id}${versionQ}`),
           fetch(`${GATEWAY_URL}/agents/${agent.id}/examples`),
         ])
         const data = await detailRes.json()
@@ -119,9 +144,11 @@ export function AgentDetailModal({
     return () => {
       active = false
     }
-  }, [agent?.id, open])
+  }, [agent?.id, agent?.version, open])
 
   if (!agent) return null
+
+  const modalTitle = marketplaceCardTitle((detail ?? agent) as unknown as Record<string, unknown>)
 
   const handleCopyCommand = async () => {
     await navigator.clipboard.writeText(localRunCommand)
@@ -215,7 +242,7 @@ export function AgentDetailModal({
             <div className="flex-1">
               <div className="flex flex-wrap items-center gap-2 mb-2 pr-10">
                 <DialogTitle className="font-headline text-2xl md:text-3xl tracking-tight">
-                  {agent.name}
+                  {modalTitle}
                 </DialogTitle>
                 <Badge
                   variant="secondary"
@@ -490,6 +517,13 @@ export function AgentDetailModal({
                       </Link>
                     </p>
                   </div>
+
+                  <div className="space-y-3 border-t border-rock-blue/15 pt-4">
+                    <p className="text-xs text-pampas/55">
+                      Open this agent&apos;s prompt and registry context in Cursor or Claude right after you run it locally.
+                    </p>
+                    <OpenInIdeButtons ideContext={ideContext} variant="outline" />
+                  </div>
                 </div>
               </TabsContent>
 
@@ -567,7 +601,7 @@ export function AgentDetailModal({
               {canManage && (
                 <>
                   <Link
-                    href={`/upload?edit=1&id=${encodeURIComponent(agent.id)}`}
+                    href={`/upload?from_agent=${encodeURIComponent(agent.id)}&version=${encodeURIComponent(agent.version ?? "")}`}
                     className={cn(
                       "inline-flex items-center justify-center rounded-xl px-3 py-2 text-sm font-medium",
                       "border border-rock-blue/20 bg-pampas/6 text-pampas/80 hover:bg-pampas/10"
@@ -615,6 +649,7 @@ export function AgentDetailModal({
             <Copy className="h-4 w-4 mr-2" />
             Copy run command
           </Button>
+          <OpenInIdeButtons ideContext={ideContext} variant="outline" />
           </div>
         </div>
         {archiveMessage && (

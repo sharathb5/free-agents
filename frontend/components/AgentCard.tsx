@@ -5,7 +5,7 @@ import { Copy } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { AgentSummary } from "@/lib/agents"
+import { AgentSummary, marketplaceCardTitle } from "@/lib/agents"
 import { cn } from "@/lib/utils"
 
 interface AgentCardProps {
@@ -83,7 +83,9 @@ export function AgentCard({ agent, onClick, onCopy }: AgentCardProps) {
         <CardHeader>
           <div className="flex items-start justify-between">
             <div className="flex-1">
-              <CardTitle className="text-xl mb-2 tracking-tight">{agent.name}</CardTitle>
+              <CardTitle className="text-xl mb-2 tracking-tight">
+                {marketplaceCardTitle(agent as unknown as Record<string, unknown>)}
+              </CardTitle>
               <CardDescription className="text-sm line-clamp-2">
                 {agent.description}
               </CardDescription>

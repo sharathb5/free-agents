@@ -3,7 +3,7 @@
 import * as React from "react"
 import { ChevronDown, ChevronUp, Sparkles } from "lucide-react"
 import { Input } from "@/components/ui/input"
-import { UploadAgentDraft } from "@/lib/agent-upload"
+import { sanitizePromptForDisplay, UploadAgentDraft } from "@/lib/agent-upload"
 import { cn } from "@/lib/utils"
 
 interface DetailsStepProps {
@@ -119,7 +119,11 @@ export function DetailsStep({ draft, onChange, mode, helperText, reviewNotes }: 
       </div>
 
       <div className="grid gap-5 md:grid-cols-2">
-        <Field label="Name" required>
+        <Field
+          label="Name"
+          required
+          hint="Short product title for the marketplace card — not your username (use Created by for attribution)."
+        >
           <Input value={draft.name} onChange={(event) => updateDraft({ name: event.target.value })} placeholder="Concise product name" />
         </Field>
         <Field label="Agent ID" required hint="Lowercase letters, numbers, underscores, and hyphens only.">
@@ -163,7 +167,11 @@ export function DetailsStep({ draft, onChange, mode, helperText, reviewNotes }: 
             placeholder="research, github, support"
           />
         </Field>
-        <Field label="Created by" required>
+        <Field
+          label="Created by"
+          required
+          hint="Shown on the card as “Created by …”. Defaults to your full name when available, not only @username."
+        >
           <Input
             value={draft.credits.name}
             onChange={(event) => updateDraft({ credits: { ...draft.credits, name: event.target.value } })}
@@ -180,8 +188,20 @@ export function DetailsStep({ draft, onChange, mode, helperText, reviewNotes }: 
         />
       </Field>
 
-      <Field label="Prompt" required>
-        <Textarea value={draft.prompt} onChange={(event) => updateDraft({ prompt: event.target.value })} placeholder="Describe the agent behavior, constraints, and output style." className="min-h-[220px]" />
+      <Field
+        label="Prompt"
+        required
+        hint="Listing preview below removes badges, markdown images, and link syntax; the text area is the source you edit."
+      >
+        <Textarea
+          value={draft.prompt}
+          onChange={(event) => updateDraft({ prompt: event.target.value })}
+          placeholder="Describe the agent behavior, constraints, and output style."
+          className="min-h-[220px]"
+        />
+        <div className="mt-3 max-h-[220px] overflow-y-auto whitespace-pre-wrap rounded-2xl border border-rock-blue/12 bg-kilamanjaro/35 px-4 py-3 text-sm text-pampas/72">
+          {sanitizePromptForDisplay(draft.prompt) || "—"}
+        </div>
       </Field>
 
       <div className="rounded-[28px] border border-rock-blue/16 bg-kilamanjaro/42 p-5">

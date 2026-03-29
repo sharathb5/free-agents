@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
 import { useAuth, useClerk, useUser } from "@clerk/nextjs"
 import { ClerkHeaderAuth } from "@/components/ClerkHeaderAuth"
@@ -15,6 +15,7 @@ import { ToolsStep } from "./ToolsStep"
 import { AddToolsModal } from "./AddToolsModal"
 import { ReviewStep } from "./ReviewStep"
 import { clearUploadDraftState, loadUploadDraftState, saveUploadDraftState } from "@/lib/upload-draft-persistence"
+import { marketplaceAgentDeepLink } from "@/lib/agents"
 import {
   CatalogToolCategory,
   createEmptyDraft,
@@ -30,8 +31,12 @@ import {
   GitHubRepoSummary,
   githubRepoToImportUrl,
   normalizeDraftFromRepo,
+  catalogToolIdSet,
+  filterToolIdsToCatalog,
+  isLikelySyntheticToolId,
   recommendTools,
   registerAgent,
+  fetchAgentForUploadEdit,
   RepoDiscoveredTool,
   RepoWrappedTool,
   serializeDraftToSpec,
@@ -117,10 +122,14 @@ function validateDraft(draft: UploadAgentDraft) {
 }
 
 export function AgentUploadFlow() {
-  const router = useRouter()
   const { isSignedIn, getToken, isLoaded: clerkAuthLoaded } = useAuth()
   const { openUserProfile } = useClerk()
   const { user } = useUser()
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const fromAgentEditId = searchParams.get("from_agent")?.trim() ?? ""
+  const fromAgentEditVersion = searchParams.get("version")?.trim() || undefined
+  const [catalogLoadDone, setCatalogLoadDone] = React.useState(false)
 
   const [path, setPath] = React.useState<UploadFlowPath | null>(null)
   const [step, setStep] = React.useState(0)
@@ -139,6 +148,8 @@ export function AgentUploadFlow() {
   const [recommendationRationale, setRecommendationRationale] = React.useState<string | null>(null)
   const [reviewNotes, setReviewNotes] = React.useState<string[]>([])
   const [repoUrl, setRepoUrl] = React.useState("")
+  const repoUrlRef = React.useRef(repoUrl)
+  repoUrlRef.current = repoUrl
   const [githubConnectionState, setGitHubConnectionState] = React.useState<GitHubConnectionState>({
     provider: "github",
     status: "disconnected",
@@ -165,6 +176,7 @@ export function AgentUploadFlow() {
   const [wrappedRepoTools, setWrappedRepoTools] = React.useState<RepoWrappedTool[]>([])
 
   React.useEffect(() => {
+    if (fromAgentEditId) return
     const persisted = loadUploadDraftState()
     if (!persisted) return
     // Only hydrate when the flow hasn't started in this session.
@@ -186,7 +198,7 @@ export function AgentUploadFlow() {
     setExtractedToolIds(Array.isArray(selections.extracted_tool_ids) ? selections.extracted_tool_ids.filter((t: any) => typeof t === "string") : [])
     setUserEditedBundle(Boolean(selections.user_edited_bundle))
     setUserEditedTools(Boolean(selections.user_edited_tools))
-  }, [maxReachedStep, path, step])
+  }, [fromAgentEditId, maxReachedStep, path, step])
 
   React.useEffect(() => {
     // Debounced persistence so refresh/navigation doesn't lose progress.
@@ -231,8 +243,8 @@ export function AgentUploadFlow() {
   React.useEffect(() => {
     if (!user || draft.credits.name.trim()) return
     const fallback =
-      user.username ||
       user.fullName ||
+      user.username ||
       user.primaryEmailAddress?.emailAddress?.split("@")[0] ||
       ""
     if (fallback) {
@@ -242,6 +254,36 @@ export function AgentUploadFlow() {
       }))
     }
   }, [user, draft.credits.name])
+
+  const catalogToolIds = React.useMemo(() => catalogToolIdSet(toolCategories), [toolCategories])
+
+  React.useEffect(() => {
+    if (catalogToolIds.size === 0) return
+    setSelectedTools((prev) => {
+      const next = filterToolIdsToCatalog(prev, catalogToolIds)
+      if (next.length === prev.length && next.every((v, i) => v === prev[i])) return prev
+      return next
+    })
+    setRecommendedToolIds((prev) => {
+      const next = filterToolIdsToCatalog(prev, catalogToolIds)
+      if (next.length === prev.length && next.every((v, i) => v === prev[i])) return prev
+      return next
+    })
+    setRecommendedTools((prev) => {
+      const next = filterToolIdsToCatalog(prev, catalogToolIds)
+      if (next.length === prev.length && next.every((v, i) => v === prev[i])) return prev
+      return next
+    })
+  }, [catalogToolIds, selectedTools, recommendedToolIds, recommendedTools])
+
+  React.useEffect(() => {
+    if (extractedTools.length === 0) {
+      setExtractedToolIds([])
+      return
+    }
+    if (toolCategories.length === 0) return
+    setExtractedToolIds(inferExtractedToolIds({ extractedTools, toolCategories }))
+  }, [extractedTools, toolCategories])
 
   React.useEffect(() => {
     let cancelled = false
@@ -255,6 +297,10 @@ export function AgentUploadFlow() {
         if (cancelled) return
         setStatusTone("error")
         setStatusMessage(error instanceof Error ? error.message : "Failed to load upload dependencies")
+      } finally {
+        if (!cancelled) {
+          setCatalogLoadDone(true)
+        }
       }
     }
     loadCatalog()
@@ -262,6 +308,48 @@ export function AgentUploadFlow() {
       cancelled = true
     }
   }, [])
+
+  React.useEffect(() => {
+    if (!fromAgentEditId || !catalogLoadDone) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        clearUploadDraftState()
+        const { draft: nextDraft, selectedBundleId: bundleId, selectedTools: tools } = await fetchAgentForUploadEdit({
+          agentId: fromAgentEditId,
+          version: fromAgentEditVersion,
+        })
+        if (cancelled) return
+        setDraft(nextDraft)
+        setSelectedBundleId(bundleId)
+        setSelectedTools(tools)
+        setRecommendedBundleId(bundleId)
+        setRecommendedToolIds(tools)
+        setRecommendedTools(tools)
+        setUserEditedBundle(true)
+        setUserEditedTools(true)
+        setPath("build")
+        setStep(1)
+        setMaxReachedStep(1)
+        setRepoUrl("")
+        setRepoSummary("")
+        setReviewNotes([])
+        setExtractedTools([])
+        setWrappedRepoTools([])
+        setImportError("")
+        setStatusMessage("")
+        setStatusTone("idle")
+        router.replace("/upload", { scroll: false })
+      } catch (error) {
+        if (cancelled) return
+        setStatusTone("error")
+        setStatusMessage(error instanceof Error ? error.message : "Failed to load agent for editing")
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [catalogLoadDone, fromAgentEditId, fromAgentEditVersion, router])
 
   const loadGitHubRepos = React.useCallback(async () => {
     if (!clerkAuthLoaded) {
@@ -352,9 +440,10 @@ export function AgentUploadFlow() {
 
         const result = await recommendTools(input)
         if (cancelled) return
+        const recIds = filterToolIdsToCatalog(result.recommended_additional_tool_ids || [], catalogToolIds)
         setRecommendedBundleId(result.recommended_bundle_id || "")
-        setRecommendedTools(result.recommended_additional_tool_ids || [])
-        setRecommendedToolIds(result.recommended_additional_tool_ids || [])
+        setRecommendedTools(recIds)
+        setRecommendedToolIds(recIds)
         setRecommendationRationale(result.rationale || null)
 
         // Seed selection only if the user has not already edited.
@@ -362,9 +451,7 @@ export function AgentUploadFlow() {
           setSelectedBundleId((current) => current || result.recommended_bundle_id || "")
         }
         if (!userEditedTools) {
-          setSelectedTools((current) =>
-            current.length > 0 ? current : (result.recommended_additional_tool_ids || [])
-          )
+          setSelectedTools((current) => (current.length > 0 ? current : recIds))
         }
       } catch {
         // Non-blocking.
@@ -375,6 +462,7 @@ export function AgentUploadFlow() {
       cancelled = true
     }
   }, [
+    catalogToolIds,
     draft.description,
     draft.name,
     draft.prompt,
@@ -406,7 +494,9 @@ export function AgentUploadFlow() {
         }
 
         const output = result.output
-        const normalized = normalizeDraftFromRepo(output.draft_agent_spec || {})
+        const normalized = normalizeDraftFromRepo(output.draft_agent_spec || {}, {
+          repoUrl: repoUrlRef.current.trim(),
+        })
         setDraft((current) => ({
           ...current,
           ...normalized,
@@ -421,7 +511,6 @@ export function AgentUploadFlow() {
         setRecommendedTools(output.recommended_additional_tools || [])
         setRecommendedToolIds(output.recommended_additional_tools || [])
         setSelectedTools(output.recommended_additional_tools || [])
-        setExtractedToolIds([]) // best-effort mapping added later; keep stable empty default for now
         setUserEditedBundle(false)
         setUserEditedTools(false)
         setRecommendationRationale(null)
@@ -595,6 +684,14 @@ export function AgentUploadFlow() {
       setStatusMessage(`Complete these fields before continuing: ${missing.join(", ")}`)
       return
     }
+    const uname = user?.username?.trim().toLowerCase()
+    if (uname && draft.name.trim().toLowerCase() === uname) {
+      setStatusTone("error")
+      setStatusMessage(
+        "Use a short product title for Name, not your @username. Put attribution under Created by."
+      )
+      return
+    }
     if (!selectedBundleId && recommendedBundleId) {
       setSelectedBundleId(recommendedBundleId)
     }
@@ -627,14 +724,38 @@ export function AgentUploadFlow() {
       if (selectedBundleId) {
         spec.bundle_id = selectedBundleId
       }
-      if (selectedTools.length > 0) {
-        spec.additional_tools = selectedTools
+      let catalogIds = catalogToolIds
+      if (catalogIds.size === 0) {
+        try {
+          const fresh = await fetchCatalogTools()
+          catalogIds = catalogToolIdSet(fresh.categories || [])
+        } catch {
+          // keep empty; synthetic ids still stripped in filterToolIdsToCatalog
+        }
+      }
+      const beforeTools = selectedTools.slice()
+      const additionalTools = filterToolIdsToCatalog(selectedTools, catalogIds)
+      if (process.env.NODE_ENV === "development") {
+        const synth = beforeTools.filter((t) => isLikelySyntheticToolId(t))
+        if (synth.length) {
+          console.warn("[register] dropped synthetic tool ids:", synth)
+        }
+        const dropped = beforeTools.filter((t) => !additionalTools.includes(t))
+        if (dropped.length) {
+          console.warn("[register] additional_tools filter", {
+            before: beforeTools,
+            after: additionalTools,
+            catalogSize: catalogIds.size,
+          })
+        }
+      }
+      if (additionalTools.length > 0) {
+        spec.additional_tools = additionalTools
       }
       const result = await registerAgent(spec, token)
       clearUploadDraftState()
-      setStatusTone("success")
-      setStatusMessage(`Registered ${result.agent_id}@${result.version}`)
-      window.setTimeout(() => router.push("/"), 700)
+      const href = marketplaceAgentDeepLink(result.agent_id, result.version)
+      router.push(href)
     } catch (error) {
       setStatusTone("error")
       if (
@@ -645,20 +766,27 @@ export function AgentUploadFlow() {
         error.details !== null
       ) {
         const d = error.details as Record<string, unknown>
-        const aid = typeof d.agent_id === "string" ? d.agent_id : ""
+        const aid =
+          typeof d.agent_id === "string" ? d.agent_id : typeof d.id === "string" ? d.id : ""
         const ver = typeof d.version === "string" ? d.version : ""
         if (aid && ver) {
-          const href = `/?agent=${encodeURIComponent(aid)}&version=${encodeURIComponent(ver)}`
+          const href = marketplaceAgentDeepLink(aid, ver)
           setStatusMessage(
             <>
               Agent version already exists:{" "}
               <Link
                 href={href}
+                prefetch={false}
+                scroll={false}
                 className="font-medium text-red-100 underline decoration-red-200/60 underline-offset-2 hover:decoration-red-100"
               >
-                {aid}@{ver}
+                View existing listing
               </Link>
-              {" — open spec in the marketplace."}
+              {" "}
+              <span className="text-red-200/80">
+                ({aid}@{ver})
+              </span>
+              {" — opens this agent on the marketplace home."}
             </>
           )
         } else {

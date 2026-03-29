@@ -21,13 +21,13 @@ import {
 import { CodeBlock } from "@/components/CodeBlock"
 import { useAuth } from "@clerk/nextjs"
 import { ClerkHeaderAuth } from "@/components/ClerkHeaderAuth"
-import { AgentSummary, Primitive } from "@/lib/agents"
+import { AgentSummary, marketplaceCardTitle, Primitive } from "@/lib/agents"
 
 function agentPayloadToSummary(data: Record<string, unknown>): AgentSummary {
   return {
     id: String(data.id ?? ""),
     version: data.version != null ? String(data.version) : undefined,
-    name: String(data.name || data.id || ""),
+    name: marketplaceCardTitle(data),
     description: String(data.description || ""),
     primitive: data.primitive as Primitive,
     tags: Array.isArray(data.tags) ? (data.tags as string[]) : [],
@@ -433,7 +433,7 @@ function MarketplacePageContent() {
               </Link>
               {filteredAgents.map((agent) => (
                 <AgentCard
-                  key={agent.id}
+                  key={`${agent.id}-${agent.version ?? ""}`}
                   agent={agent}
                   onClick={() => handleAgentClick(agent)}
                   onCopy={() => handleCopy("Install command copied")}

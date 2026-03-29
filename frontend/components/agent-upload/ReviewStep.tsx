@@ -1,7 +1,16 @@
 "use client"
 
+import * as React from "react"
 import { Button } from "@/components/ui/button"
-import { UploadAgentDraft, ToolBundle } from "@/lib/agent-upload"
+import { CodeBlock } from "@/components/CodeBlock"
+import { OpenInIdeButtons } from "@/components/OpenInIdeButtons"
+import {
+  DEFAULT_AGENT_USE_CASES,
+  exampleInvokeCurl,
+  exampleLocalRunCommand,
+  type AgentIdeContextInput,
+} from "@/lib/agent-ide-context"
+import { sanitizePromptForDisplay, UploadAgentDraft, ToolBundle } from "@/lib/agent-upload"
 
 interface ReviewStepProps {
   flow: "build" | "github"
@@ -30,6 +39,24 @@ export function ReviewStep({
   isSubmitting,
   submitLabel,
 }: ReviewStepProps) {
+  const [installOs, setInstallOs] = React.useState<"mac_linux" | "windows">("mac_linux")
+  const reviewExampleInput = {
+    question: "Summarize the main API surface and common usage patterns in this repository",
+  }
+  const localRun = exampleLocalRunCommand(draft.id.trim() || "your-agent-id", installOs)
+  const curlExample = exampleInvokeCurl(draft.id.trim() || "your-agent-id", reviewExampleInput)
+  const ideContext = React.useMemo(
+    (): AgentIdeContextInput => ({
+      prompt: draft.prompt,
+      agentId: draft.id,
+      version: draft.version,
+      description: draft.description,
+      useCases: DEFAULT_AGENT_USE_CASES,
+      sourceRepo: repoUrl?.trim() || undefined,
+    }),
+    [draft.description, draft.id, draft.prompt, draft.version, repoUrl]
+  )
+
   return (
     <div className="grid gap-5">
       <section className="rounded-[28px] border border-rock-blue/16 bg-pampas/[0.045] p-6">
@@ -65,7 +92,7 @@ export function ReviewStep({
           <p className="text-xs uppercase tracking-[0.18em] text-pampas/45">Tool configuration</p>
           <div className="mt-4 grid gap-3 text-sm text-pampas/78">
             <div><span className="text-pampas/48">Selected bundle:</span> {selectedBundle?.title || selectedBundle?.bundle_id || "None"}</div>
-            <div><span className="text-pampas/48">Bundle tools:</span> {selectedBundle?.tools.join(", ") || "None"}</div>
+            <div><span className="text-pampas/48">Bundle tools:</span> {(selectedBundle?.tools ?? []).join(", ") || "None"}</div>
             <div><span className="text-pampas/48">Additional tools:</span> {selectedTools.join(", ") || "None"}</div>
             <div><span className="text-pampas/48">Memory:</span> {draft.supports_memory ? `${draft.memory_policy?.mode || "last_n"} • ${draft.memory_policy?.max_messages || 10} messages` : "Disabled"}</div>
           </div>
@@ -91,7 +118,9 @@ export function ReviewStep({
 
       <section className="rounded-[28px] border border-rock-blue/16 bg-kilamanjaro/42 p-5">
         <p className="text-xs uppercase tracking-[0.18em] text-pampas/45">Prompt and advanced summary</p>
-        <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-pampas/66">{draft.prompt || "No prompt yet."}</p>
+        <p className="mt-4 whitespace-pre-wrap text-sm leading-relaxed text-pampas/66">
+          {sanitizePromptForDisplay(draft.prompt) || "No prompt yet."}
+        </p>
         <div className="mt-5 grid gap-3 text-sm text-pampas/54 md:grid-cols-2">
           <div>Input schema keys: {Object.keys(draft.input_schema || {}).join(", ") || "None"}</div>
           <div>Output schema keys: {Object.keys(draft.output_schema || {}).join(", ") || "None"}</div>
@@ -108,6 +137,51 @@ export function ReviewStep({
           </div>
         </section>
       )}
+
+      <section className="rounded-[28px] border border-rock-blue/16 bg-kilamanjaro/42 p-5">
+        <p className="text-xs uppercase tracking-[0.18em] text-pampas/45">Local run, API, and IDE</p>
+        <p className="mt-2 max-w-2xl text-sm text-pampas/58">
+          Same commands as the marketplace detail view. Open this agent&apos;s full context in Cursor or Claude while you finish review.
+        </p>
+        <div className="mt-4 inline-flex rounded-lg border border-rock-blue/30 bg-pampas/5 p-1">
+          <button
+            type="button"
+            onClick={() => setInstallOs("mac_linux")}
+            className={`rounded-md px-3 py-1.5 text-xs ${
+              installOs === "mac_linux"
+                ? "bg-rock-blue/25 text-pampas"
+                : "text-pampas/70 hover:text-pampas"
+            }`}
+          >
+            macOS/Linux
+          </button>
+          <button
+            type="button"
+            onClick={() => setInstallOs("windows")}
+            className={`rounded-md px-3 py-1.5 text-xs ${
+              installOs === "windows"
+                ? "bg-rock-blue/25 text-pampas"
+                : "text-pampas/70 hover:text-pampas"
+            }`}
+          >
+            Windows
+          </button>
+        </div>
+        <div className="mt-4 space-y-3">
+          <div>
+            <p className="text-xs font-medium text-pampas/55 mb-1.5">Run command</p>
+            <CodeBlock code={localRun} />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-pampas/55 mb-1.5">Example API request (curl)</p>
+            <CodeBlock code={curlExample} />
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-xs text-pampas/50">Prefill your IDE or Claude with prompt + registry context</span>
+            <OpenInIdeButtons ideContext={ideContext} variant="outline" size="sm" />
+          </div>
+        </div>
+      </section>
 
       <div className="flex justify-end">
         <Button onClick={onSubmit} disabled={isSubmitting}>

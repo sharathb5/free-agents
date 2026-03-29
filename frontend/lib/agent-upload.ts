@@ -202,6 +202,235 @@ async function parseJsonResponse<T>(response: Response, fallback: string): Promi
   return data as T
 }
 
+/** IDs present in the gateway tools catalog (used to drop synthetic / stale tool_id values). */
+export function catalogToolIdSet(categories: CatalogToolCategory[]): Set<string> {
+  const out = new Set<string>()
+  for (const category of categories) {
+    for (const tool of category.tools || []) {
+      if (tool.tool_id) out.add(String(tool.tool_id).trim())
+    }
+  }
+  return out
+}
+
+/** Pipeline / codegen ids (e.g. `build_ui__cli_command__code_execution`) are never catalog tool_ids. */
+export function isLikelySyntheticToolId(id: string): boolean {
+  const t = String(id || "").trim()
+  if (!t) return true
+  if (t.includes("__")) return true
+  return false
+}
+
+export function filterToolIdsToCatalog(toolIds: string[], catalogIds: Set<string>): string[] {
+  const deduped = [...new Set(toolIds.map((t) => String(t || "").trim()).filter(Boolean))]
+  const noSynthetic = deduped.filter((id) => !isLikelySyntheticToolId(id))
+  if (catalogIds.size === 0) {
+    return noSynthetic
+  }
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const id of noSynthetic) {
+    if (!catalogIds.has(id) || seen.has(id)) continue
+    seen.add(id)
+    out.push(id)
+  }
+  return out
+}
+
+export function partitionToolIdsByCatalog(
+  toolIds: string[],
+  catalogIds: Set<string>
+): { valid: string[]; dropped: string[] } {
+  const deduped = [...new Set(toolIds.map((t) => String(t || "").trim()).filter(Boolean))]
+  const syntheticDropped = deduped.filter((id) => isLikelySyntheticToolId(id))
+  if (catalogIds.size === 0) {
+    const valid = deduped.filter((id) => !isLikelySyntheticToolId(id))
+    return { valid, dropped: [...new Set(syntheticDropped)] }
+  }
+  const valid = filterToolIdsToCatalog(toolIds, catalogIds)
+  const validSet = new Set(valid)
+  const dropped = deduped.filter((id) => id && !validSet.has(id))
+  const droppedUnique = [...new Set(dropped)]
+  return { valid, dropped: droppedUnique }
+}
+
+function parseGitHubRepoFromUrl(url: string): { owner: string; repo: string } | null {
+  try {
+    const u = new URL(url.trim())
+    if (u.hostname !== "github.com") return null
+    const parts = u.pathname.split("/").filter(Boolean)
+    if (parts.length < 2) return null
+    return { owner: parts[0], repo: parts[1].replace(/\.git$/i, "") }
+  } catch {
+    return null
+  }
+}
+
+const TITLE_SPECIAL_WORDS: Record<string, string> = {
+  ai: "AI",
+  ui: "UI",
+  api: "API",
+  sdk: "SDK",
+  cli: "CLI",
+  http: "HTTP",
+  id: "ID",
+  llm: "LLM",
+  mcp: "MCP",
+}
+
+function titleCaseWord(w: string): string {
+  const lower = w.toLowerCase()
+  if (TITLE_SPECIAL_WORDS[lower]) return TITLE_SPECIAL_WORDS[lower]
+  if (w.length <= 1) return w.toUpperCase()
+  return w.charAt(0).toUpperCase() + lower.slice(1)
+}
+
+function wordsFromSlug(slug: string): string[] {
+  return slug.split(/[-_]+/).filter(Boolean)
+}
+
+/** Short marketplace title from `owner/repo` (not README text). E.g. vercel/ai → "Vercel AI", langchain-ai/langgraph → "Langgraph". */
+export function listingTitleFromGitHubUrl(url: string): string | null {
+  const parsed = parseGitHubRepoFromUrl(url)
+  if (!parsed) return null
+  const ownerWords = wordsFromSlug(parsed.owner)
+  const repoWords = wordsFromSlug(parsed.repo)
+  if (repoWords.length === 0) return null
+  if (repoWords.length === 1 && repoWords[0].length <= 4) {
+    return [...ownerWords, ...repoWords].map(titleCaseWord).join(" ")
+  }
+  if (repoWords.length === 1) {
+    return titleCaseWord(repoWords[0])
+  }
+  return repoWords.map(titleCaseWord).join(" ")
+}
+
+/**
+ * Turn repo/designer output into a short listing title: strip HTML/Markdown noise, first line, cap length.
+ */
+export function sanitizeImportedAgentName(raw: string, maxLen = 120): string {
+  let s = String(raw || "")
+  s = s.replace(/<[^>]*>/g, " ")
+  s = s.replace(/^\s*#{1,6}\s*/gm, "")
+  s = s.replace(/\[(.*?)\]\([^)]*\)/g, "$1")
+  s = s.replace(/`{1,3}[^`]*`{1,3}/g, " ")
+  const firstLine = s.split(/\r?\n/)[0] || s
+  s = firstLine.replace(/\s+/g, " ").trim()
+  if (s.length > maxLen) s = `${s.slice(0, maxLen - 1).trimEnd()}…`
+  return s
+}
+
+/**
+ * Strip HTML tags, markdown images/badges (![...](...)), and [text](url) links for UI summaries.
+ */
+export function sanitizePromptForDisplay(raw: string, maxLen = 12000): string {
+  let s = String(raw || "")
+  s = s.replace(/<[^>]*>/g, " ")
+  s = s.replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+  s = s.replace(/!\[[^\]]*\]\[[^\]]*\]/g, " ")
+  for (let i = 0; i < 6; i++) {
+    s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+  }
+  s = s.replace(/`{1,3}[^`]*`{1,3}/g, " ")
+  s = s.replace(/\s+/g, " ").trim()
+  if (s.length > maxLen) s = `${s.slice(0, maxLen - 1).trimEnd()}…`
+  return s
+}
+
+/** Bump semver patch (1.2.3 → 1.2.4) so re-registering an edited agent creates a new version. */
+export function nextRegistrationVersion(current: string): string {
+  const t = String(current || "").trim()
+  if (!t) return "0.1.0"
+  const m = /^(\d+)\.(\d+)\.(\d+)(.*)$/.exec(t)
+  if (m) {
+    const patch = parseInt(m[3], 10)
+    if (!Number.isNaN(patch)) {
+      return `${m[1]}.${m[2]}.${patch + 1}${m[4] || ""}`
+    }
+  }
+  return `${t}.1`
+}
+
+export type RegistryAgentPayload = Record<string, unknown>
+
+export function hydrateUploadDraftFromRegistryAgent(data: RegistryAgentPayload): {
+  draft: UploadAgentDraft
+  selectedBundleId: string
+  selectedTools: string[]
+} {
+  const base = createEmptyDraft()
+  const id = String(data.id ?? "").trim()
+  const sourceVersion = String(data.version ?? "").trim()
+  const tags = Array.isArray(data.tags) ? data.tags.map((t) => String(t).trim()).filter(Boolean) : base.tags
+  const credits =
+    typeof data.credits === "object" && data.credits && data.credits !== null
+      ? {
+          name: String((data.credits as Record<string, unknown>).name || "").trim(),
+          url: String((data.credits as Record<string, unknown>).url || "").trim() || undefined,
+        }
+      : base.credits
+
+  const mpRaw = data.memory_policy
+  let memory_policy = base.memory_policy
+  if (typeof mpRaw === "object" && mpRaw !== null) {
+    const o = mpRaw as Record<string, unknown>
+    const mode = String(o.mode ?? o.strategy ?? "last_n")
+    memory_policy = {
+      mode,
+      max_messages: Number(o.max_messages ?? 10),
+      max_chars: Number(o.max_chars ?? 8000),
+    }
+  }
+
+  const primitive = (data.primitive as UploadAgentDraft["primitive"]) || base.primitive
+  const supports_memory = Boolean(data.supports_memory)
+
+  const draft: UploadAgentDraft = {
+    ...base,
+    id,
+    version: nextRegistrationVersion(sourceVersion),
+    name: String(data.name ?? "").trim(),
+    description: String(data.description ?? "").trim(),
+    primitive,
+    tags,
+    credits,
+    prompt: String(data.prompt ?? "").trim(),
+    input_schema:
+      typeof data.input_schema === "object" && data.input_schema ? (data.input_schema as Record<string, unknown>) : base.input_schema,
+    output_schema:
+      typeof data.output_schema === "object" && data.output_schema ? (data.output_schema as Record<string, unknown>) : base.output_schema,
+    supports_memory,
+    memory_policy: supports_memory ? memory_policy : base.memory_policy,
+  }
+
+  const selectedBundleId = String(data.bundle_id ?? "").trim()
+  const additional = Array.isArray(data.additional_tools)
+    ? data.additional_tools.map((t) => String(t).trim()).filter(Boolean)
+    : []
+
+  return {
+    draft,
+    selectedBundleId,
+    selectedTools: additional,
+  }
+}
+
+export async function fetchAgentForUploadEdit(args: { agentId: string; version?: string }) {
+  const id = args.agentId.trim()
+  if (!id) {
+    throw new Error("Missing agent id")
+  }
+  const q = new URLSearchParams()
+  if (args.version?.trim()) q.set("version", args.version.trim())
+  const qs = q.toString()
+  const url = `${GATEWAY_URL}/agents/${encodeURIComponent(id)}${qs ? `?${qs}` : ""}`
+  const data = await parseJsonResponse<RegistryAgentPayload>(
+    await fetch(url, { cache: "no-store" }),
+    "Failed to load agent for editing"
+  )
+  return hydrateUploadDraftFromRegistryAgent(data)
+}
+
 export function createEmptyDraft(): UploadAgentDraft {
   return {
     id: "",
@@ -267,7 +496,10 @@ export function serializeDraftToSpec(draft: UploadAgentDraft) {
   return spec
 }
 
-export function normalizeDraftFromRepo(raw: Partial<UploadAgentDraft> & Record<string, unknown>): UploadAgentDraft {
+export function normalizeDraftFromRepo(
+  raw: Partial<UploadAgentDraft> & Record<string, unknown>,
+  opts?: { repoUrl?: string }
+): UploadAgentDraft {
   const base = createEmptyDraft()
 
   const tags = Array.isArray(raw.tags)
@@ -290,15 +522,40 @@ export function normalizeDraftFromRepo(raw: Partial<UploadAgentDraft> & Record<s
         }
       : base.memory_policy
 
+  const idStr = String(raw.id || "").trim()
+  const fromRepo = opts?.repoUrl?.trim() ? listingTitleFromGitHubUrl(opts.repoUrl.trim()) : null
+  const rawName = String(raw.name || base.name)
+  const sanitizedFallback = sanitizeImportedAgentName(rawName)
+  const looksLikeRepoDump =
+    /^repository\s*:/i.test(sanitizedFallback) ||
+    /^languages\s*:/i.test(sanitizedFallback) ||
+    sanitizedFallback.length > 100
+
+  let name = fromRepo || ""
+  if (!name && looksLikeRepoDump && idStr.includes("_")) {
+    const last = idStr.lastIndexOf("_")
+    const owner = idStr.slice(0, last)
+    const repo = idStr.slice(last + 1)
+    if (owner && repo && /^[a-z0-9-]+$/i.test(owner) && /^[a-z0-9-]+$/i.test(repo)) {
+      name = listingTitleFromGitHubUrl(`https://github.com/${owner}/${repo}`) || ""
+    }
+  }
+  if (!name && !looksLikeRepoDump) name = sanitizedFallback
+  if (!name) name = base.name
+
+  const rawPrompt = String(raw.prompt || base.prompt)
+  const cleanedPrompt = sanitizePromptForDisplay(rawPrompt)
+  const prompt = cleanedPrompt.length > 0 ? cleanedPrompt : rawPrompt.trim()
+
   return {
     id: String(raw.id || base.id),
     version: String(raw.version || base.version),
-    name: String(raw.name || base.name),
+    name,
     description: String(raw.description || base.description),
     primitive: (raw.primitive as UploadAgentDraft["primitive"]) || base.primitive,
     tags,
     credits,
-    prompt: String(raw.prompt || base.prompt),
+    prompt,
     input_schema:
       typeof raw.input_schema === "object" && raw.input_schema ? (raw.input_schema as Record<string, unknown>) : base.input_schema,
     output_schema:
@@ -536,7 +793,7 @@ export async function fetchRepoRunResult(runId: string) {
 }
 
 export async function registerAgent(spec: Record<string, unknown>, token: string) {
-  return parseJsonResponse<{ ok: boolean; agent_id: string; version: string }>(
+  const data = await parseJsonResponse<Record<string, unknown>>(
     await fetch(`${GATEWAY_URL}/agents/register`, {
       method: "POST",
       headers: {
@@ -547,4 +804,15 @@ export async function registerAgent(spec: Record<string, unknown>, token: string
     }),
     "Failed to register agent"
   )
+  const agent_id = String(data.agent_id ?? data.id ?? "").trim()
+  const version = String(data.version ?? "").trim()
+  if (!agent_id || !version) {
+    throw new Error("Register response missing agent_id or version")
+  }
+  return {
+    ok: Boolean(data.ok),
+    agent_id,
+    version,
+    status: typeof data.status === "string" ? data.status : undefined,
+  }
 }
