@@ -86,6 +86,7 @@ def _print_help() -> None:
     print("  agent-toolbox bootstrap <venv_dir>")
     print("  agent-toolbox logs tail [--n N]   Tail last N lines of run log (env FREE_AGENTS_LOG_PATH)")
     print("  agent-toolbox logs show <run_id>  Show log lines for a run")
+    print("  agent-toolbox deploy --replit   Prepare Replit config + open import URL (same as free-agents)")
     print()
 
 
@@ -265,6 +266,16 @@ def main() -> None:
         if subcommand == "bootstrap":
             target = sys.argv[2] if len(sys.argv) > 2 else ".venv"
             _run_bootstrap(target)
+            sys.exit(0)
+        if subcommand == "deploy":
+            from .cli_replit_deploy import run_deploy_replit
+
+            rest = [a.strip() for a in sys.argv[2:]]
+            if "--replit" not in rest:
+                print("Usage: agent-toolbox deploy --replit   (alias: free-agents deploy --replit)")
+                print("Prepares .replit / replit.nix, lists Secrets to add, opens Replit import.")
+                sys.exit(1)
+            run_deploy_replit()
             sys.exit(0)
 
     import uvicorn

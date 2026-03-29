@@ -43,6 +43,7 @@ dev = [
 
 [project.scripts]
 agent-toolbox = "app.cli:main"
+free-agents = "app.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
