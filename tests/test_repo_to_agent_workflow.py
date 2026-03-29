@@ -104,7 +104,8 @@ def test_run_repo_to_agent_workflow_aggregates_outputs_and_passes_inputs_correct
     assert result.architecture.languages == ["Python"]
     assert result.important_files == ["README.md", "src/main.py"]
     assert result.recommended_bundle == "repo_to_agent"
-    assert "agent_from_repo" == result.draft_agent_spec.get("id")
+    assert result.draft_agent_spec.get("id") == "openai_agent_toolbox"
+    assert result.draft_agent_spec.get("version") == "1.0.0-ed36d8da2e"
     # Workflow filters recommended_additional_tools: github_repo_read is in bundle so removed; http_request remains.
     assert result.recommended_additional_tools == ["http_request"]
     assert "Looks good overall." in result.review_notes

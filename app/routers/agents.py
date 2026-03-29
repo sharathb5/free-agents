@@ -62,10 +62,41 @@ def _parse_bool(value: Optional[str]) -> Optional[bool]:
     return None
 
 
-@router.post("/register")
-async def register_agent(request: Request) -> JSONResponse:
+def _coerce_register_spec_payload(payload: Any) -> tuple[Optional[Dict[str, Any]], Optional[JSONResponse]]:
+    """Parse JSON/YAML spec from POST /agents/register body; return (spec, error_response)."""
+    if not isinstance(payload, dict) or "spec" not in payload:
+        return None, _agents_error(400, "AGENT_SPEC_INVALID", "Missing 'spec' field")
+    raw_spec = payload.get("spec")
+    if isinstance(raw_spec, str):
+        try:
+            spec_obj = yaml.safe_load(raw_spec)
+        except Exception as exc:
+            return None, _agents_error(
+                400, "AGENT_SPEC_INVALID", "Spec must be valid YAML", details={"message": str(exc)}
+            )
+    elif isinstance(raw_spec, dict):
+        spec_obj = raw_spec
+    else:
+        return None, _agents_error(400, "AGENT_SPEC_INVALID", "Spec must be a YAML string or JSON object")
+    return spec_obj, None
+
+
+def _register_resolve_owner(request: Request) -> tuple[Optional[str], Optional[JSONResponse]]:
+    settings = get_settings()
+    owner_user_id: Optional[str] = None
+    if settings.clerk_jwt_key or settings.clerk_jwks_url:
+        try:
+            owner_user_id = require_clerk_user_id(request)
+        except AuthError as exc:
+            return None, _agents_error(401, "UNAUTHORIZED", str(exc))
+    return owner_user_id, None
+
+
+@router.post("/register/preview")
+async def register_agent_preview(request: Request) -> JSONResponse:
     """
-    Register an agent spec (YAML string or JSON object).
+    Same JSON body as POST /agents/register; validates spec and reports would_register / would_conflict
+    without writing to the registry.
     """
     try:
         from app.dependencies import enforce_auth
@@ -79,25 +110,64 @@ async def register_agent(request: Request) -> JSONResponse:
     except Exception:
         return _agents_error(400, "MALFORMED_REQUEST", "Request body must be valid JSON")
 
-    if not isinstance(payload, dict) or "spec" not in payload:
-        return _agents_error(400, "AGENT_SPEC_INVALID", "Missing 'spec' field")
+    spec_obj, err = _coerce_register_spec_payload(payload)
+    if err is not None:
+        return err
 
-    raw_spec = payload.get("spec")
-    if isinstance(raw_spec, str):
-        try:
-            spec_obj = yaml.safe_load(raw_spec)
-        except Exception as exc:
-            return _agents_error(400, "AGENT_SPEC_INVALID", "Spec must be valid YAML", details={"message": str(exc)})
-    elif isinstance(raw_spec, dict):
-        spec_obj = raw_spec
-    else:
-        return _agents_error(400, "AGENT_SPEC_INVALID", "Spec must be a YAML string or JSON object")
+    owner_user_id, oerr = _register_resolve_owner(request)
+    if oerr is not None:
+        return oerr
 
     try:
-        settings = get_settings()
-        owner_user_id: Optional[str] = None
-        if settings.clerk_jwt_key or settings.clerk_jwks_url:
-            owner_user_id = require_clerk_user_id(request)
+        preview = registry_store.preview_register_agent(spec_obj, owner_user_id=owner_user_id)
+    except registry_store.AgentSpecInvalid as exc:
+        return _agents_error(400, "AGENT_SPEC_INVALID", str(exc), details=getattr(exc, "details", None))
+    except Exception as exc:
+        logger.exception("preview_register_agent failed")
+        return _agents_error(500, "REGISTRY_ERROR", "Failed to preview registration", details={"message": str(exc)})
+
+    return JSONResponse(status_code=200, content={"ok": True, "dry_run": True, **preview})
+
+
+@router.post("/register")
+async def register_agent(request: Request, dry_run: Optional[str] = None) -> JSONResponse:
+    """
+    Register an agent spec (YAML string or JSON object).
+
+    Query ``dry_run=true`` (or ``1`` / ``yes``): same response shape as POST /agents/register/preview
+    (no insert).
+    """
+    try:
+        from app.dependencies import enforce_auth
+
+        enforce_auth(request)
+    except AuthError as exc:
+        return _agents_error(401, "UNAUTHORIZED", str(exc))
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return _agents_error(400, "MALFORMED_REQUEST", "Request body must be valid JSON")
+
+    spec_obj, err = _coerce_register_spec_payload(payload)
+    if err is not None:
+        return err
+
+    owner_user_id, oerr = _register_resolve_owner(request)
+    if oerr is not None:
+        return oerr
+
+    if _parse_bool(dry_run):
+        try:
+            preview = registry_store.preview_register_agent(spec_obj, owner_user_id=owner_user_id)
+        except registry_store.AgentSpecInvalid as exc:
+            return _agents_error(400, "AGENT_SPEC_INVALID", str(exc), details=getattr(exc, "details", None))
+        except Exception as exc:
+            logger.exception("preview_register_agent failed")
+            return _agents_error(500, "REGISTRY_ERROR", "Failed to preview registration", details={"message": str(exc)})
+        return JSONResponse(status_code=200, content={"ok": True, "dry_run": True, **preview})
+
+    try:
         agent_id, version = registry_store.register_agent(spec_obj, owner_user_id=owner_user_id)
     except registry_store.AgentNotOwner as exc:
         return _agents_error(403, "FORBIDDEN", str(exc))

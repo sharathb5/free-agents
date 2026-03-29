@@ -423,6 +423,65 @@ def register_agent(spec: Dict[str, Any], *, owner_user_id: Optional[str] = None)
     return normalized["id"], normalized["version"]
 
 
+def preview_register_agent(spec: Dict[str, Any], *, owner_user_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Same validation as register_agent without inserting.
+
+    Returns:
+        would_register: True if register_agent would succeed (no row conflict, no owner mismatch).
+        would_conflict: True if (id, version) already exists.
+        owner_mismatch: True if id is owned by another user (when owner_user_id is set).
+        normalized: { agent_id, version, name } after _normalize_spec.
+        existing: row metadata when would_conflict (else None).
+    """
+    init_registry_db()
+    normalized = _normalize_spec(spec)
+    owner_mismatch = False
+    existing_meta: Optional[Dict[str, Any]] = None
+    would_conflict = False
+
+    with connect() as conn:
+        if owner_user_id:
+            existing_owner_rows = conn.execute(
+                sql("SELECT DISTINCT owner_user_id FROM agents WHERE id = ?"),
+                (normalized["id"],),
+            ).fetchall()
+            existing_owner_ids = {
+                row["owner_user_id"]
+                for row in existing_owner_rows
+                if row.get("owner_user_id")
+            }
+            if existing_owner_ids and owner_user_id not in existing_owner_ids:
+                owner_mismatch = True
+
+        row = conn.execute(
+            sql("SELECT id, version, name, owner_user_id, created_at FROM agents WHERE id = ? AND version = ?"),
+            (normalized["id"], normalized["version"]),
+        ).fetchone()
+        if row is not None:
+            would_conflict = True
+            existing_meta = {
+                "agent_id": row["id"],
+                "version": row["version"],
+                "name": row["name"],
+                "owner_user_id": row["owner_user_id"],
+                "created_at": row["created_at"],
+            }
+
+    would_register = not would_conflict and not owner_mismatch
+    return {
+        "would_register": would_register,
+        "would_conflict": would_conflict,
+        "owner_mismatch": owner_mismatch,
+        "normalized": {
+            "agent_id": normalized["id"],
+            "version": normalized["version"],
+            "name": normalized["name"],
+        },
+        "existing": existing_meta,
+    }
+
+
 def list_agents(
     *,
     q: Optional[str] = None,

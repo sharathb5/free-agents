@@ -22,6 +22,7 @@ from .models import (
 )
 from .repo_tool_wrapper import wrap_discovered_tools
 from .code_tool_discovery import discover_code_defined_tools, merge_discovered_tools
+from .canonical_agent_id import canonical_agent_id_from_repo, deterministic_import_version
 from .templates import (
     AGENT_DESIGNER_TEMPLATE,
     AGENT_REVIEWER_TEMPLATE,
@@ -533,32 +534,23 @@ def run_repo_to_agent_workflow(
             tools_filter_note = " ".join(parts)
             draft_output = draft_output.model_copy(update={"recommended_additional_tools": valid_ordered})
 
-    # Prevent repeated imports for different repos from colliding on the same
-    # registry (id="draft-from-repo", version="0.1.0") which breaks the demo UX:
-    # re-registering hits AGENT_VERSION_EXISTS and the UI routes to the older draft.
-    #
-    # We keep agent_id stable but make the version deterministic per repo,
-    # so each repo gets a distinct registered version.
+    # Canonical registry id + deterministic version per repo coordinates so:
+    # - Different repos never share the same agent id.
+    # - Re-importing the same owner/repo yields the same (id, version) pair
+    #   (register again → AGENT_VERSION_EXISTS; use preview/dry_run or bump version).
     try:
         if isinstance(draft_output.draft_agent_spec, dict):
-            import hashlib
-
             owner_key = str(plan.owner or "").strip() or "unknown_owner"
             repo_key = str(plan.repo or "").strip() or "unknown_repo"
-            repo_hash = hashlib.sha256(f"{owner_key}/{repo_key}".encode("utf-8")).hexdigest()[:10]
             base_version = str(draft_output.draft_agent_spec.get("version") or "0.1.0").strip()
-            # Version format: "<base_prefix>-<hash>" within registry max length.
-            base_prefix = base_version.split("-", 1)[0][:6] if base_version else "0.1.0"
-            new_version = f"{base_prefix}-{repo_hash}"
-            if len(new_version) > 32:
-                new_version = new_version[:31]
+            new_version = deterministic_import_version(base_version, owner_key, repo_key)
+            canonical_id = canonical_agent_id_from_repo(owner_key, repo_key)
             updated_spec = dict(draft_output.draft_agent_spec)
             updated_spec["version"] = new_version
-            # Ensure id exists (should already, but guardrail for openai designer output).
-            updated_spec["id"] = str(updated_spec.get("id") or "draft-from-repo").strip() or "draft-from-repo"
+            updated_spec["id"] = canonical_id
             draft_output = draft_output.model_copy(update={"draft_agent_spec": updated_spec})
     except Exception:
-        # Non-fatal: if hashing fails, we keep the original version.
+        # Non-fatal: if normalization fails, keep the designer output as-is.
         pass
 
     # 7. agent_reviewer (repo coords + scout + architecture + draft)
