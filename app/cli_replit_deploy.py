@@ -29,6 +29,15 @@
 # 5) Node / monorepo
 #    package.json lives under frontend/ only; gateway is Python-only. Did not add Node to
 #    replit.nix since the stated goal is the Free Agents API gateway, not the Next.js app.
+#
+# 6) Git on Replit: stale lock + blocked .git writes + broken .replit during rebase
+#    After pull/rebase/merge, an empty or stale lock under .git (e.g. index.lock) can block
+#    every git command until removed manually in Shell. Separately, the Repl environment
+#    sometimes refuses writes to .git (IDE Git panel then can't fetch/commit); only Shell
+#    may work, or a Repl restart may be needed. Merge conflict markers inside .replit break
+#    TOML parsing → Nix environment fails to build; fix file then git rebase --abort or
+#    reset --hard origin/main. Replit Git UI shows "Unsupported state: middle of a rebase"
+#    until rebase is finished or aborted. No Replit API surfaced in-product to clear locks.
 # -----------------------------------------------------------------------------
 from __future__ import annotations
 
