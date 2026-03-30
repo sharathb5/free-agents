@@ -27,6 +27,7 @@ This document describes the repo-to-agent feature (V1): turning a GitHub reposit
 | `openai_adapter` | Placeholder for OpenAI Agents SDK (build config, run specialist); unchanged except for interface consistency. |
 | `agent_spec_bridge` | Normalize/validate draft spec for registry; catalog resolution at register time. |
 | `persistence` | `persist_if_valid(result, owner, repo)` (validate then store); `persist_validated_agent(...)` (store only); `prepare_repo_to_agent_persistence_payload(result)` for handoff. |
+| `canonical_agent_id` | `canonical_agent_id_from_repo`, `deterministic_import_version` — stable registry `id` / `version` from repo coordinates (applied in `workflow` before reviewer). |
 
 ## Repo → specialist workflow
 
@@ -119,6 +120,29 @@ Adding a new tool or bundle requires updating the YAML files; once updated, work
 - [x] Tests for validation, workflow (including guardrails), agent_spec_bridge, and related modules.
 - [x] `run_repo_validation.py` runs on known repos and reports validation status; prints a **PERSISTENCE** section (stored: yes/no and agent_id/version when stored).
 - [x] **Persistence (V1)**: Validated results are stored via `persist_if_valid`; agents are registered in the registry and retrievable via `get_agent` / `get_agent_as_stored`. Set `REPO_VALIDATION_BACKEND=internal` to run the script without OpenAI (stub output may fail validation; use OpenAI backend for real runs that can persist).
+
+## Canonical agent id and import version (registry)
+
+Repo-to-agent drafts that pass through `run_repo_to_agent_workflow` are stamped **before** `agent_reviewer` so registry uploads are stable and collision behavior is predictable.
+
+### Canonical agent id (`owner` / `repo`)
+
+- **Source**: GitHub `owner` and `repo` strings from the workflow plan (after URL parsing when only `url` is provided).
+- **Function**: `app.repo_to_agent.canonical_agent_id.canonical_agent_id_from_repo(owner, repo)`.
+- **Rules**: Lowercase; each label is stripped, `.git` removed, and any run of characters outside `[a-z0-9]` is collapsed to a single `_`. Labels are joined as `{owner_seg}_{repo_seg}`. The result is truncated to **63** characters (registry max id length). It must match `^[a-z0-9][a-z0-9_-]{1,62}$`. If the slug is still invalid, the id falls back to `a_<14-hex-chars>` derived from `SHA-256(owner/repo)`.
+- **Stability**: The same `owner/repo` pair always yields the same id.
+
+### Import version string
+
+- **Function**: `deterministic_import_version(base_version, owner, repo)` in the same module.
+- **Format**: `{base_prefix}-{10_hex_nibbles}` where `base_prefix` is the part of the draft’s `version` before the first `-`, truncated to **6** characters (default draft `0.1.0` → prefix `0.1.0`), and the suffix is the first **10** characters of `SHA-256("{owner}/{repo}")` (UTF-8). Total length is capped at **32** (registry version max).
+- **Stability**: The same `owner/repo` and same draft `base_version` always yield the same registry `version`.
+- **Re-import**: Importing the **same** repository again produces the same `(id, version)`. Registering that spec twice returns **409 AGENT_VERSION_EXISTS**; bump the draft `version` or change repo coordinates to register a new row.
+
+### Registry preview (dry run)
+
+- **POST** `/agents/register/preview` — same JSON body as **POST** `/agents/register` (`{"spec": {...}}` or YAML string). Validates the spec and returns **200** with `dry_run: true`, `would_register`, `would_conflict`, `owner_mismatch`, `normalized` (`agent_id`, `version`, `name`), and `existing` (row metadata when a conflicting row exists). Does **not** write to the database.
+- **POST** `/agents/register?dry_run=true` (also `1` / `yes`) — same behavior as `/register/preview`.
 
 ## Where the OpenAI SDK will plug in later
 

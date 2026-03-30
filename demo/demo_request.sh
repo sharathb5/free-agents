@@ -3,9 +3,10 @@
 # Usage: bash demo/demo_request.sh
 
 GATEWAY_URL="http://localhost:4280"
-AGENT_ID="draft-from-repo"
+AGENT_ID="langchain_ai_open_agent_platform"
+AGENT_VERSION="0.1.0-0fbf08824d"
 
-curl -s -X POST "${GATEWAY_URL}/agents/${AGENT_ID}/invoke" \
+curl -s -X POST "${GATEWAY_URL}/agents/${AGENT_ID}/invoke?version=${AGENT_VERSION}" \
   -H "Content-Type: application/json" \
   -d '{
     "input": {

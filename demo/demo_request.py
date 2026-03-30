@@ -13,8 +13,9 @@ import urllib.request
 import urllib.error
 
 GATEWAY_URL = "http://localhost:4280"
-AGENT_ID    = "draft-from-repo"
-ENDPOINT    = f"{GATEWAY_URL}/agents/{AGENT_ID}/invoke"
+AGENT_ID    = "langchain_ai_open_agent_platform"
+DEMO_AGENT_VERSION = "0.1.0-0fbf08824d"  # deterministic per langchain-ai/open-agent-platform
+ENDPOINT    = f"{GATEWAY_URL}/agents/{AGENT_ID}/invoke?version={DEMO_AGENT_VERSION}"
 
 DEFAULT_QUESTION = (
     "How does open-agent-platform define and expose agents, "
@@ -70,18 +71,87 @@ def print_response(data: dict, elapsed: float):
     print(DIVIDER)
 
     if isinstance(output, dict):
-        answer = output.get("answer", "")
-        key_files = output.get("key_files", [])
+        # LangChain-style structured outputs often arrive as `output.parameters`.
+        parameters = output.get("parameters")
+        if isinstance(parameters, dict):
+            # Prefer well-known fields first for readability.
+            ordered_fields = ["agentsDefinition", "toolRegistryPattern"]
+            printed_any = False
 
-        if answer:
-            print()
-            for line in answer.split("\n"):
-                print(f"  {line}")
+            def _print_multiline(label: str, value: str) -> None:
+                nonlocal printed_any
+                printed_any = True
+                print(f"\n  {label}:")
+                for line in value.split("\n"):
+                    print(f"    {line}" if line.strip() else "")
 
-        if key_files:
-            print(f"\n  Key files:")
-            for f in key_files:
-                print(f"    • {f}")
+            for field in ordered_fields:
+                v = parameters.get(field)
+                if isinstance(v, str) and v.strip():
+                    _print_multiline(field, v.strip())
+
+            # Fallback: print any string fields in parameters.
+            if not printed_any:
+                for k, v in parameters.items():
+                    if isinstance(v, str) and v.strip():
+                        _print_multiline(str(k), v.strip())
+                        break
+
+            # Optionally also show key files if provided.
+            key_files = output.get("key_files", [])
+            if isinstance(key_files, list) and key_files:
+                print(f"\n  Key files:")
+                for f in key_files:
+                    print(f"    • {f}")
+                printed_any = True
+
+            # Final fallback: show raw parameters so the demo never looks blank.
+            if not printed_any:
+                print("\n  Output parameters:")
+                print(json.dumps(parameters, indent=2, ensure_ascii=False)[:4000])
+        else:
+            # Legacy/freeform outputs.
+            printed_any = False
+
+            # Sometimes we get JSON-schema-like wrappers: { "properties": { "answer": "..." } }
+            properties = output.get("properties")
+            if isinstance(properties, dict):
+                wrapped_answer = properties.get("answer")
+                if isinstance(wrapped_answer, str) and wrapped_answer.strip():
+                    print()
+                    for line in wrapped_answer.split("\n"):
+                        print(f"  {line}")
+                    printed_any = True
+                else:
+                    # Fallback: print any string field in properties.
+                    for k, v in properties.items():
+                        if isinstance(v, str) and v.strip():
+                            print(f"\n  {k}:")
+                            for line in v.split("\n"):
+                                print(f"    {line}")
+                            printed_any = True
+                            break
+
+            if not printed_any:
+                answer = output.get("answer", "")
+                key_files = output.get("key_files", [])
+
+                if isinstance(answer, str) and answer.strip():
+                    print()
+                    for line in answer.split("\n"):
+                        print(f"  {line}")
+                    printed_any = True
+
+                if isinstance(key_files, list) and key_files:
+                    print(f"\n  Key files:")
+                    for f in key_files:
+                        print(f"    • {f}")
+                    printed_any = True
+
+            # Final fallback: show raw output.
+            if not printed_any:
+                print("\n  Output:")
+                print(json.dumps(output, indent=2, ensure_ascii=False)[:4000])
     else:
         print(f"\n  {output}")
 
