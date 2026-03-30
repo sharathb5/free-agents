@@ -9,6 +9,7 @@ Deterministic/minimal backend with TODOs for real reasoning (LLM) integration.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -105,10 +106,36 @@ def _run_github_repo_read(
     return registry.execute("github_repo_read", args, run_context)
 
 
+def _strip_markdown(text: str) -> str:
+    """Remove markdown syntax from text, leaving plain readable content."""
+    # Strip image badges and standalone images: [![alt](img)](url) or ![alt](url)
+    text = re.sub(r'!\[([^\]]*)\]\([^)]*\)', '', text)
+    # Strip links, keeping the link text: [text](url)
+    text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
+    # Strip reference-style links: [text][ref] → text
+    text = re.sub(r'\[([^\]]*)\]\[[^\]]*\]', r'\1', text)
+    # Strip inline code backticks (single or triple), keeping inner text
+    text = re.sub(r'```[a-zA-Z]*\n?', '', text)
+    text = re.sub(r'`([^`]*)`', r'\1', text)
+    # Strip bold and italic markers: ***text***, **text**, *text*, __text__, _text_
+    text = re.sub(r'\*{1,3}([^*]*)\*{1,3}', r'\1', text)
+    text = re.sub(r'_{1,2}([^_]*)_{1,2}', r'\1', text)
+    # Strip HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Strip blockquote markers
+    text = re.sub(r'^\s*>\s?', '', text, flags=re.MULTILINE)
+    # Strip horizontal rules
+    text = re.sub(r'^\s*[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+    # Collapse leftover whitespace artifacts
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    return text
+
+
 def _excerpt_for_repo_summary(text: str, *, max_chars: int = 900) -> str:
     """First substantive paragraph from markdown-ish text, bounded (deterministic)."""
     if not text or not isinstance(text, str):
         return ""
+    text = _strip_markdown(text)
     t = text.strip()
     lines = t.splitlines()
     start = 0
