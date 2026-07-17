@@ -1,3 +1,10 @@
+[![PyPI version](https://img.shields.io/pypi/v/agent-toolbox)](https://pypi.org/project/agent-toolbox/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![CI](https://github.com/sharathb5/free-agents/actions/workflows/publish-image.yml/badge.svg)](https://github.com/sharathb5/free-agents/actions/workflows/publish-image.yml)
+
+**free-agents** is a preset-based AI agent gateway that wraps any LLM provider behind a stable HTTP API — designed for developers who want to ship agents without rebuilding the plumbing.
+
 ## Standardized Agent Runtime (MVP)
 
 ![GHCR](https://img.shields.io/badge/ghcr-sharathb5%2Fagent--toolbox-blue)
@@ -101,8 +108,8 @@ Open Swagger UI at `http://localhost:4280/docs`.
 If you're contributing or running from source:
 
 ```bash
-git clone <REPO_URL>
-cd agent-toolbox
+git clone https://github.com/sharathb5/free-agents.git
+cd free-agents
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
@@ -350,6 +357,14 @@ Put a `.env` file in the **repository root** (next to the `app/` package). It is
 6) one repair attempt (if invalid) → response
 
 In v1, `POST /stream` returns **501 Not Implemented** with a standard error envelope.
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, testing, and PR guidelines.
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, how to run tests, commit style
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community standards
+- [SECURITY.md](SECURITY.md) — how to report vulnerabilities privately
 
 ## Docker (direct)
 

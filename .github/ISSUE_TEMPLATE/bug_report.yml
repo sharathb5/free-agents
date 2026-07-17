@@ -1,0 +1,85 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill out every section — it helps us reproduce and fix the issue faster.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of what went wrong.
+      placeholder: "e.g. POST /invoke returned 500 with no error body when PROVIDER=openrouter"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps to reproduce. Include curl commands or code snippets.
+      placeholder: |
+        1. Start server: `AGENT_PRESET=summarizer PROVIDER=openrouter uvicorn app.main:app --port 4280`
+        2. Run: `curl -X POST http://localhost:4280/invoke -H "Content-Type: application/json" -d '{"input": {"text": "hello"}}'`
+        3. See error
+    validations:
+      required: true
+
+  - type: input
+    id: preset
+    attributes:
+      label: Preset used
+      description: Which `AGENT_PRESET` were you using?
+      placeholder: "e.g. summarizer, triage, classifier"
+    validations:
+      required: false
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider used
+      description: Which `PROVIDER` were you using?
+      placeholder: "e.g. stub, openrouter, openai"
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `pip show agent-toolbox | grep Version` or the git commit SHA.
+      placeholder: "e.g. 0.1.3 or bef1574"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: env
+    attributes:
+      label: Environment
+      options:
+        - pipx install (local)
+        - pip install (venv)
+        - Docker
+        - Render (hosted)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Logs, screenshots, or anything else that might help.
+    validations:
+      required: false

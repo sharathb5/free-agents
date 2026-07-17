@@ -86,7 +86,7 @@ def _print_help() -> None:
     print("  agent-toolbox bootstrap <venv_dir>")
     print("  agent-toolbox logs tail [--n N]   Tail last N lines of run log (env FREE_AGENTS_LOG_PATH)")
     print("  agent-toolbox logs show <run_id>  Show log lines for a run")
-    print("  agent-toolbox deploy --replit   Prepare Replit config + open import URL (same as free-agents)")
+    print("  agent-toolbox deploy --replit <agent_id>   Prepare Replit config + open import URL (same as free-agents)")
     print()
 
 
@@ -272,10 +272,18 @@ def main() -> None:
 
             rest = [a.strip() for a in sys.argv[2:]]
             if "--replit" not in rest:
-                print("Usage: agent-toolbox deploy --replit   (alias: free-agents deploy --replit)")
+                print("Usage: agent-toolbox deploy --replit <agent_id>   (alias: free-agents deploy --replit <agent_id>)")
                 print("Prepares .replit / replit.nix, lists Secrets to add, opens Replit import.")
                 sys.exit(1)
-            run_deploy_replit()
+            try:
+                replit_idx = rest.index("--replit")
+            except ValueError:
+                replit_idx = -1
+            agent_id = rest[replit_idx + 1].strip() if replit_idx >= 0 and replit_idx + 1 < len(rest) else ""
+            if not agent_id:
+                print("Usage: agent-toolbox deploy --replit <agent_id>   (alias: free-agents deploy --replit <agent_id>)")
+                sys.exit(1)
+            run_deploy_replit(agent_id)
             sys.exit(0)
 
     import uvicorn

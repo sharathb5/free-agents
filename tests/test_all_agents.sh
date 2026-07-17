@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_DIR="/Users/sharath/agent-toolbox/agent-toolbox"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$BASE_DIR"
 
 source .venv/bin/activate
@@ -14,16 +15,16 @@ test_agent() {
     local preset=$1
     local input_json=$2
     local description=$3
-    
+
     echo ""
     echo "=========================================="
     echo "Testing: $preset - $description"
     echo "=========================================="
-    
+
     # Start server in background
     AGENT_PRESET="$preset" PROVIDER=stub uvicorn app.main:app --host 127.0.0.1 --port "$PORT" > /tmp/uvicorn_${preset}.log 2>&1 &
     local server_pid=$!
-    
+
     # Wait for server to start (check until ready)
     for i in {1..10}; do
         if curl -sS "${BASE_URL}/health" > /dev/null 2>&1; then
@@ -31,24 +32,24 @@ test_agent() {
         fi
         sleep 1
     done
-    
+
     # Test /health
     echo "→ GET /health"
     curl -sS "${BASE_URL}/health" | python3 -m json.tool || echo "FAILED"
     echo ""
-    
+
     # Test /schema
     echo "→ GET /schema"
     curl -sS "${BASE_URL}/schema" | python3 -m json.tool | head -20 || echo "FAILED"
     echo ""
-    
+
     # Test /invoke
     echo "→ POST /invoke"
     curl -sS -X POST "${BASE_URL}/invoke" \
         -H "Content-Type: application/json" \
         -d "$input_json" | python3 -m json.tool || echo "FAILED"
     echo ""
-    
+
     # Kill server
     kill $server_pid 2>/dev/null || true
     sleep 1
