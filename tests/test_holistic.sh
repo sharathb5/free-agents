@@ -1,6 +1,10 @@
 #!/bin/bash
 
-echo "🧪 HOLISTIC TEST SUITE"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$BASE_DIR"
+
+echo "Holistic Test Suite"
 echo "======================"
 echo ""
 
@@ -26,7 +30,7 @@ check() {
 }
 
 # 1. Backend Tests
-echo "1️⃣  Backend Tests (pytest)"
+echo "1.  Backend Tests (pytest)"
 echo "---------------------------"
 if [ -d ".venv" ]; then
     source .venv/bin/activate
@@ -38,10 +42,9 @@ fi
 echo ""
 
 # 2. Makefile Commands
-echo "2️⃣  Makefile Commands"
+echo "2.  Makefile Commands"
 echo "----------------------"
 if command -v make &> /dev/null; then
-    # Check if Makefile exists and has expected targets
     grep -q "AGENT ?= summarizer" Makefile; check "Makefile has AGENT default"
     grep -q "^install:" Makefile; check "Makefile has install target"
     grep -q "^run:" Makefile; check "Makefile has run target"
@@ -54,7 +57,7 @@ fi
 echo ""
 
 # 3. Preset Files
-echo "3️⃣  Preset Files"
+echo "3.  Preset Files"
 echo "-----------------"
 PRESETS=("summarizer" "classifier" "extractor" "meeting_notes" "triage")
 for preset in "${PRESETS[@]}"; do
@@ -68,22 +71,20 @@ done
 echo ""
 
 # 4. Frontend Structure
-echo "4️⃣  Frontend Structure"
+echo "4.  Frontend Structure"
 echo "----------------------"
 if [ -d "frontend" ]; then
     [ -f "frontend/package.json" ]; check "Frontend package.json exists"
     [ -f "frontend/app/page.tsx" ]; check "Frontend page.tsx exists"
     [ -f "frontend/components/AgentDetailModal.tsx" ]; check "AgentDetailModal.tsx exists"
-    
-    # Check if modal has been updated (no global setup steps)
+
     if grep -q "If you haven.*already.*clone the repo" frontend/components/AgentDetailModal.tsx 2>/dev/null; then
         check "Agent modal references global setup (not repeating it)"
     else
         echo -e "${RED}✗${NC} Agent modal may still have global setup steps"
         ((FAILED++))
     fi
-    
-    # Check if hero has global setup
+
     if grep -q "Get set up locally" frontend/app/page.tsx 2>/dev/null; then
         check "Hero has global 'Get set up' dialog"
     else
@@ -96,10 +97,9 @@ fi
 echo ""
 
 # 5. Frontend Agents Data
-echo "5️⃣  Frontend Agents Data"
+echo "5.  Frontend Agents Data"
 echo "------------------------"
 if [ -f "frontend/lib/agents.ts" ]; then
-    # Check that real agents match presets
     for preset in "${PRESETS[@]}"; do
         if grep -q "id: \"${preset}\"" frontend/lib/agents.ts 2>/dev/null; then
             check "Frontend has agent data for ${preset}"
@@ -107,8 +107,7 @@ if [ -f "frontend/lib/agents.ts" ]; then
             echo -e "${YELLOW}⚠${NC} Frontend missing agent data for ${preset}"
         fi
     done
-    
-    # Check install commands match Makefile pattern
+
     if grep -q "AGENT_PRESET=" frontend/lib/agents.ts 2>/dev/null; then
         check "Frontend install commands use AGENT_PRESET"
     else
@@ -122,7 +121,7 @@ fi
 echo ""
 
 # 6. README
-echo "6️⃣  Documentation"
+echo "6.  Documentation"
 echo "------------------"
 if [ -f "README.md" ]; then
     grep -q "port 4280" README.md 2>/dev/null; check "README mentions port 4280"
@@ -136,7 +135,7 @@ fi
 echo ""
 
 # 7. Docker Compose
-echo "7️⃣  Docker Configuration"
+echo "7.  Docker Configuration"
 echo "------------------------"
 if [ -f "docker-compose.yml" ]; then
     grep -q "4280" docker-compose.yml 2>/dev/null; check "docker-compose.yml uses port 4280"
@@ -148,7 +147,7 @@ echo ""
 
 # Summary
 echo "======================"
-echo "📊 TEST SUMMARY"
+echo "TEST SUMMARY"
 echo "======================"
 echo -e "${GREEN}Passed: ${PASSED}${NC}"
 if [ $FAILED -gt 0 ]; then
@@ -157,6 +156,6 @@ if [ $FAILED -gt 0 ]; then
 else
     echo -e "${GREEN}Failed: ${FAILED}${NC}"
     echo ""
-    echo -e "${GREEN}✅ All checks passed!${NC}"
+    echo -e "${GREEN}All checks passed!${NC}"
     exit 0
 fi

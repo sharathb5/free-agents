@@ -13,10 +13,18 @@ htmlcov/
 .env*.local
 .envfrontend
 # Allow a checked-in template only if you add one: !.env.example
+!.env.example
 .DS_Store
 
 # Cursor / IDE (debug logs, local settings — may contain paths or payloads)
 .cursor/
+
+# Node
+node_modules/
+.next/
+
+# Perch MCP stdio bridge
+mcp/perch/node_modules/
 
 # Local gateway / CLI logs (may echo requests or tokens)
 *.log
@@ -29,6 +37,8 @@ dist/
 build/
 *.egg-info/
 
+# SQLite databases
+*.db
+
 # Session store DB (Context + Session Memory)
 data/
-
