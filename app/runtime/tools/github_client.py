@@ -17,31 +17,6 @@ API_BASE = "https://api.github.com"
 DEFAULT_TIMEOUT = 15.0
 ACCEPT = "application/vnd.github.v3+json"
 
-_DEBUG_LOG_PATH = "/Users/sharath/agent-toolbox/agent-toolbox/.cursor/debug-ced206.log"
-
-
-def _debug_log(*, hypothesis_id: str, location: str, message: str, data: Dict[str, Any] | None = None, run_id: str = "pre-fix") -> None:
-    # #region agent log
-    try:
-        import json as _json
-        import time as _time
-
-        payload: Dict[str, Any] = {
-            "sessionId": "ced206",
-            "timestamp": int(_time.time() * 1000),
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data or {},
-        }
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(_json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion agent log
-
-
 class GithubClientError(Exception):
     """GitHub API error with a safe user-facing message. No token or sensitive data."""
 
@@ -90,12 +65,6 @@ def _check_response(resp: httpx.Response, context: str) -> None:
         msg = None
     if not isinstance(msg, str):
         msg = resp.text[:200] if resp.text else ""
-    _debug_log(
-        hypothesis_id="H1",
-        location="app/runtime/tools/github_client.py:_check_response",
-        message="GitHub API returned error",
-        data={"context": context, "status_code": int(resp.status_code), "message_excerpt": (msg or "")[:120]},
-    )
     # Safe messages only; never include token or URLs with secrets
     if resp.status_code == 401:
         raise GithubClientError("GitHub authentication required or invalid credentials")

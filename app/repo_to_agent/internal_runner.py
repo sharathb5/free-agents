@@ -41,29 +41,6 @@ from .tool_discovery import discover_tools_from_repo
 
 _log = logging.getLogger(__name__)
 
-_DEBUG_LOG_PATH = "/Users/sharath/agent-toolbox/agent-toolbox/.cursor/debug-db76a9.log"
-
-
-def _debug_log(*, hypothesis_id: str, location: str, message: str, data: Dict[str, Any] | None = None) -> None:
-    # #region agent log
-    try:
-        import json as _json
-        import time as _time
-        payload: Dict[str, Any] = {
-            "sessionId": "db76a9",
-            "timestamp": int(_time.time() * 1000),
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data or {},
-        }
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(_json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion agent log
-
-
 def _template_to_preset(template: AgentTemplate) -> Preset:
     """Build a minimal Preset from an AgentTemplate for run context."""
     return Preset(
@@ -603,12 +580,6 @@ def run_specialist_with_internal_runner(
         if not owner or not repo:
             raise ValueError("repo_tool_discovery input must include owner and repo")
         file_paths, folder_paths = get_paths_to_inspect_for_tools(scout, architecture)
-        _debug_log(
-            hypothesis_id="H7",
-            location="app/repo_to_agent/internal_runner.py:repo_tool_discovery",
-            message="Paths to inspect",
-            data={"stage": "manifest_discovery_input", "file_paths_count": len(file_paths), "file_paths": file_paths[:15], "folder_paths": folder_paths},
-        )
         preset = _template_to_preset(template)
         run_id = f"internal-{uuid.uuid4().hex[:12]}"
         run_context = build_run_context(run_id=run_id, preset=preset, github_access_token=github_token)
@@ -641,33 +612,10 @@ def run_specialist_with_internal_runner(
                                 pass
             except Exception:
                 pass
-        _debug_log(
-            hypothesis_id="H7",
-            location="app/repo_to_agent/internal_runner.py:repo_tool_discovery",
-            message="Fetched file_contents and folder_listings",
-            data={
-                "stage": "manifest_discovery_fetched",
-                "file_contents_keys": sorted(file_contents.keys()),
-                "folder_listings_keys": sorted(folder_listings.keys()),
-                "tools_entries_count": len(folder_listings.get("tools") or []),
-                "tools_entries_sample": [
-                    {"path": e.get("path"), "type": e.get("type")}
-                    for e in (folder_listings.get("tools") or [])[:8]
-                ],
-                "has_agent_json": "agent.json" in file_contents,
-                "agent_json_len": len(file_contents.get("agent.json") or ""),
-            },
-        )
         discovered = discover_repo_tools_from_repo(
             scout, architecture,
             file_contents=file_contents,
             folder_listings=folder_listings,
-        )
-        _debug_log(
-            hypothesis_id="H7",
-            location="app/repo_to_agent/internal_runner.py:repo_tool_discovery",
-            message="Discovery result",
-            data={"stage": "manifest_discovery_output", "discovered_count": len(discovered), "discovered_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in discovered]},
         )
         return {"discovered_tools": [t.model_dump() for t in discovered]}
 
@@ -680,12 +628,6 @@ def run_specialist_with_internal_runner(
         if not owner or not repo:
             raise ValueError("code_tool_discovery input must include owner and repo")
         code_paths = get_paths_to_inspect_for_code_tools(scout, architecture)
-        _debug_log(
-            hypothesis_id="H7",
-            location="app/repo_to_agent/internal_runner.py:code_tool_discovery",
-            message="Code paths to inspect",
-            data={"stage": "code_discovery_input", "code_paths_count": len(code_paths), "code_paths": code_paths[:20]},
-        )
         file_contents: Dict[str, str] = {}
         preset = _template_to_preset(template)
         run_id = f"internal-{uuid.uuid4().hex[:12]}"
@@ -700,12 +642,6 @@ def run_specialist_with_internal_runner(
             except Exception:
                 pass
         code_tools = discover_code_defined_tools(scout, architecture, file_contents=file_contents)
-        _debug_log(
-            hypothesis_id="H7",
-            location="app/repo_to_agent/internal_runner.py:code_tool_discovery",
-            message="Code discovery result",
-            data={"stage": "code_discovery_output", "code_tools_count": len(code_tools), "code_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in code_tools]},
-        )
         return {"code_tools": [t.model_dump() for t in code_tools]}
 
     if template.id == AGENT_DESIGNER_TEMPLATE.id:

@@ -28,28 +28,6 @@ logger = logging.getLogger("agent-gateway")
 _registry_version = 0
 _registry_event = asyncio.Event()
 
-_DEBUG_LOG_PATH = "/Users/sharath/agent-toolbox/agent-toolbox/.cursor/debug-db76a9.log"
-
-
-def _debug_log(*, hypothesis_id: str, location: str, message: str, data: Dict[str, Any] | None = None, run_id: str = "pre-fix") -> None:
-    # #region agent log
-    try:
-        payload: Dict[str, Any] = {
-            "sessionId": "db76a9",
-            "timestamp": int(time.time() * 1000),
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data or {},
-        }
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion agent log
-
-
 def _touch_registry_version() -> None:
     global _registry_version
     _registry_version += 1
@@ -186,12 +164,6 @@ def init_registry_db() -> None:
                 existing = {r["column_name"] for r in row if isinstance(r, dict) and isinstance(r.get("column_name"), str)}
             except Exception:
                 existing = set()
-            _debug_log(
-                hypothesis_id="H6",
-                location="app/storage/registry_store.py:init_registry_db",
-                message="Postgres agents schema columns (pre-alter)",
-                data={"columns_sample": sorted(list(existing))[:30], "count": len(existing)},
-            )
             try:
                 if "owner_user_id" not in existing:
                     conn.execute("ALTER TABLE agents ADD COLUMN owner_user_id TEXT")
@@ -200,12 +172,7 @@ def init_registry_db() -> None:
             except Exception as exc:
                 # If another process is performing the migration and we time out waiting for locks,
                 # log it and proceed so the app can start if schema is already migrated.
-                _debug_log(
-                    hypothesis_id="H6",
-                    location="app/storage/registry_store.py:init_registry_db",
-                    message="Postgres agents ALTER TABLE failed",
-                    data={"error_type": type(exc).__name__, "error": str(exc)[:300]},
-                )
+                logger.warning("Postgres agents ALTER TABLE failed: %s", exc)
                 # Re-raise only if we couldn't confirm the columns exist.
                 if "owner_user_id" not in existing or "archived" not in existing:
                     raise

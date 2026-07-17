@@ -1,6 +1,6 @@
 # Model 1 — Agent Registry + “Deploy” (Register Spec) — Progress
 
-**Plan:** `/Users/sharath/.cursor/plans/agent_registry_deploy_flow_57d86e13.plan.md`  
+**Plan:** `agent_registry_deploy_flow_57d86e13`  
 **Last updated:** 2026-02-02  
 **Goal:** One running gateway hosts many agents (specs-only). Users register agent specs (YAML/JSON) into a registry, UI lists them, clients invoke any agent by id via `POST /agents/{id}/invoke`. Keep legacy `/invoke` unchanged.
 

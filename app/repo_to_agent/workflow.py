@@ -35,28 +35,6 @@ from .templates import (
 
 logger = logging.getLogger(__name__)
 
-_DEBUG_LOG_PATH = "/Users/sharath/agent-toolbox/agent-toolbox/.cursor/debug-db76a9.log"
-
-
-def _debug_log(*, hypothesis_id: str, location: str, message: str, data: Dict[str, Any] | None = None, run_id: str = "pre-fix") -> None:
-    # #region agent log
-    try:
-        payload: Dict[str, Any] = {
-            "sessionId": "db76a9",
-            "timestamp": int(time.time() * 1000),
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data or {},
-        }
-        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-    # #endregion agent log
-
-
 def _safe_trim(s: Any, max_len: int = 200) -> str:
     out = str(s or "")
     return out[:max_len]
@@ -240,17 +218,6 @@ def run_repo_to_agent_workflow(
     scout_input: Dict[str, Any] = dict(base_input)
     scout_raw = _run_step(REPO_SCOUT_TEMPLATE, scout_input)
     scout_output = RepoScoutOutput.model_validate(scout_raw)
-    _debug_log(
-        hypothesis_id="H5",
-        location="app/repo_to_agent/workflow.py:repo_scout",
-        message="Repo scout output",
-        data={
-            "stage": "scout",
-            "important_files_count": len(scout_output.important_files),
-            "important_files": scout_output.important_files[:20],
-            "repo_summary_head": _safe_trim(scout_output.repo_summary, 180),
-        },
-    )
     repo_size_hint["important_files_count"] = len(scout_output.important_files)
     repo_size_hint["language_hints_count"] = len(scout_output.language_hints)
     repo_size_hint["framework_hints_count"] = len(scout_output.framework_hints)
@@ -260,17 +227,6 @@ def run_repo_to_agent_workflow(
     architect_input["scout_summary"] = scout_output.model_dump()
     architect_raw = _run_step(REPO_ARCHITECT_TEMPLATE, architect_input)
     architect_output = RepoArchitectureOutput.model_validate(architect_raw)
-    _debug_log(
-        hypothesis_id="H5",
-        location="app/repo_to_agent/workflow.py:repo_architect",
-        message="Repo architect output",
-        data={
-            "stage": "architect",
-            "key_paths_count": len(architect_output.key_paths),
-            "key_paths": architect_output.key_paths[:30],
-            "entrypoints": architect_output.entrypoints[:10],
-        },
-    )
     repo_size_hint["key_paths_count"] = len(architect_output.key_paths)
 
     # 3. repo_tool_discovery (deterministic; runner returns discovered_tools)
@@ -286,20 +242,6 @@ def run_repo_to_agent_workflow(
     code_tools_raw = code_discovery_raw.get("code_tools") or []
     code_tools = [DiscoveredRepoTool.model_validate(t) for t in code_tools_raw]
     discovered_repo_tools = merge_discovered_tools(manifest_tools, code_tools)
-    _debug_log(
-        hypothesis_id="H7",
-        location="app/repo_to_agent/workflow.py:discovery_merge",
-        message="Discovery merge result",
-        data={
-            "stage": "discovery_merge",
-            "manifest_tools_count": len(manifest_tools),
-            "manifest_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in manifest_tools],
-            "code_tools_count": len(code_tools),
-            "code_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in code_tools],
-            "discovered_repo_tools_count": len(discovered_repo_tools),
-            "discovered_repo_tools": [{"name": t.name, "tool_type": t.tool_type, "source_path": t.source_path} for t in discovered_repo_tools],
-        },
-    )
 
     # 5. repo_tool_wrapper (deterministic; in-process; no runner call)
     wrapped_repo_tools: List[WrappedRepoTool] = wrap_discovered_tools(discovered_repo_tools)
@@ -418,21 +360,6 @@ def run_repo_to_agent_workflow(
         if tool_ids:
             contract_tools_override = list(dict.fromkeys(tool_ids))
 
-    _debug_log(
-        hypothesis_id="H5",
-        location="app/repo_to_agent/workflow.py:contract_import",
-        message="Contract import attempt",
-        data={
-            "stage": "contract_import",
-            "overrides_keys": sorted(list(contract_overrides.keys())),
-            "notes": contract_notes[:5],
-            "contract_bundle_override": contract_bundle_override,
-            "contract_tools_override": contract_tools_override,
-            "agent_json_capabilities": agent_obj.get("capabilities") if agent_obj else None,
-            "agent_json_likely_tools": agent_obj.get("likely_tools") if agent_obj else None,
-        },
-    )
-
     # 6. agent_designer (repo coords + scout + architecture + discovered + wrapped tools for awareness only)
     designer_input: Dict[str, Any] = dict(base_input)
     designer_input["scout"] = scout_output.model_dump()
@@ -441,19 +368,6 @@ def run_repo_to_agent_workflow(
     designer_input["wrapped_repo_tools"] = [t.model_dump() for t in wrapped_repo_tools]
     draft_raw = _run_step(AGENT_DESIGNER_TEMPLATE, designer_input)
     draft_output = AgentDraftOutput.model_validate(draft_raw)
-    _debug_log(
-        hypothesis_id="H5",
-        location="app/repo_to_agent/workflow.py:agent_designer",
-        message="Agent designer output (summary)",
-        data={
-            "recommended_bundle": draft_output.recommended_bundle,
-            "recommended_additional_tools_count": len(draft_output.recommended_additional_tools or []),
-            "draft_id": (draft_output.draft_agent_spec or {}).get("id"),
-            "draft_name_head": _safe_trim((draft_output.draft_agent_spec or {}).get("name"), 80),
-            "desc_head": _safe_trim((draft_output.draft_agent_spec or {}).get("description"), 140),
-            "prompt_head": _safe_trim((draft_output.draft_agent_spec or {}).get("prompt"), 160),
-        },
-    )
 
     # Apply contract overrides (if any) so we don't overfit to implementation files.
     if contract_overrides and isinstance(draft_output.draft_agent_spec, dict):
@@ -590,23 +504,6 @@ def run_repo_to_agent_workflow(
                 "Add files and commit to the repo to enable full inspection."
             )
 
-    # Tool tracking: summary of what each stage produced (for debugging backend vs frontend)
-    _debug_log(
-        hypothesis_id="H7",
-        location="app/repo_to_agent/workflow.py:tool_tracking_pipeline",
-        message="Tool tracking pipeline summary",
-        data={
-            "stage": "final_result",
-            "scout_important_files": scout_output.important_files[:25],
-            "architect_key_paths": architect_output.key_paths[:25],
-            "manifest_tools": [t.name for t in manifest_tools],
-            "code_tools": [t.name for t in code_tools],
-            "discovered_repo_tools": [t.name for t in discovered_repo_tools],
-            "wrapped_repo_tools": [t.name for t in wrapped_repo_tools],
-            "recommended_bundle": draft_output.recommended_bundle,
-            "recommended_additional_tools": draft_output.recommended_additional_tools,
-        },
-    )
     return RepoToAgentResult(
         repo_summary=scout_output.repo_summary,
         architecture=architect_output,
