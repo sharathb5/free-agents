@@ -1,3 +1,5 @@
+# free-agents
+
 [![PyPI version](https://img.shields.io/pypi/v/agent-toolbox)](https://pypi.org/project/agent-toolbox/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
@@ -6,8 +8,6 @@
 **free-agents** is a preset-based AI agent gateway that wraps any LLM provider behind a stable HTTP API — designed for developers who want to ship agents without rebuilding the plumbing.
 
 ## Standardized Agent Runtime (MVP)
-
-![GHCR](https://img.shields.io/badge/ghcr-sharathb5%2Fagent--toolbox-blue)
 
 Run a **preset-based AI agent gateway** and call it immediately via a stable HTTP contract. The north-star workflow is: run the service locally/VM → call `POST /invoke` with JSON → get consistent JSON back (with discoverable docs at `GET /schema` and Swagger at `/docs`).
 
@@ -358,14 +358,6 @@ Put a `.env` file in the **repository root** (next to the `app/` package). It is
 
 In v1, `POST /stream` returns **501 Not Implemented** with a standard error envelope.
 
-## Contributing
-
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, testing, and PR guidelines.
-
-- [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, how to run tests, commit style
-- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community standards
-- [SECURITY.md](SECURITY.md) — how to report vulnerabilities privately
-
 ## Docker (direct)
 
 ```bash
@@ -375,3 +367,11 @@ docker run --rm -p 4280:4280 \
   -e PROVIDER=stub \
   agent-gateway
 ```
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, testing, and PR guidelines.
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, how to run tests, commit style
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community standards
+- [SECURITY.md](SECURITY.md) — how to report vulnerabilities privately
